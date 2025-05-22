@@ -37,9 +37,14 @@ class Settings(BaseSettings):
     anthropic_api_key: Optional[str] = None
     NAVER_CLIENT_ID: str
     NAVER_CLIENT_SECRET: str
+    SMTP_SERVER: str
+    SMTP_PORT: int
+    SMTP_USERNAME: str
+    SMTP_PASSWORD: str
+    SENDER_EMAIL: str
 
     # 기본 모델 설정
-    MODEL_NAME: str = "gpt-3.5-turbo"
+    MODEL_NAME: str
 
     # 모델 설정
     models: Dict[str, ModelConfig] = Field(
@@ -75,7 +80,11 @@ class Settings(BaseSettings):
             "calendar_agent": AgentConfig(
                 primary_model="gpt-4.1-mini-2025-04-14",
                 fallback_models=[]
-            )
+            ),
+            "mail_agent": AgentConfig(
+                primary_model="gpt-4.1-mini-2025-04-14",
+                fallback_models=[]
+            ),
         }
     )
 

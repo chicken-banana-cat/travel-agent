@@ -3,11 +3,14 @@ import os
 import aiohttp
 from urllib.parse import quote
 import json
+import asyncio
+import time
 
 from langchain.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from .base import BaseAgent
+from ..config.settings import settings
 
 
 class SearchAgent(BaseAgent):
@@ -24,8 +27,12 @@ class SearchAgent(BaseAgent):
             항상 정확하고 신뢰할 수 있는 정보만을 제공하세요."""),
             HumanMessage(content="{query}")
         ])
-        self.naver_client_id = os.getenv("NAVER_CLIENT_ID")
-        self.naver_client_secret = os.getenv("NAVER_CLIENT_SECRET")
+        self.naver_client_id = settings.NAVER_CLIENT_ID
+        self.naver_client_secret = settings.NAVER_CLIENT_SECRET
+        # 동시 LLM API 호출 제한
+        self.llm_semaphore = asyncio.Semaphore(3)  # 최대 3개의 동시 호출 허용
+        # 네이버 API 호출 제한 (초당 10개)
+        self.naver_semaphore = asyncio.Semaphore(3)
     
     async def validate(self, input_data: Dict[str, Any]) -> bool:
         """검색 쿼리 유효성 검증"""
@@ -92,11 +99,10 @@ class SearchAgent(BaseAgent):
             search_intent = json.loads(intent_response.content)
             
             # 2. 각 장소별 상세 정보 검색
-            all_place_details = []
-            for location_info in search_intent["locations"]:
-                # 단순화된 검색 쿼리
-                if location_info['priority'] < 5:
-                    continue
+            async def process_location(location_info: Dict[str, Any]) -> List[Dict[str, Any]]:
+                if location_info['priority'] < 4:
+                    return []
+                    
                 search_query = {
                     "name": location_info["name"],
                     "search_type": location_info["search_type"]
@@ -113,19 +119,57 @@ class SearchAgent(BaseAgent):
                     result["priority"] = location_info["priority"]
                     result["original_name"] = location_info["name"]
                 
-                all_place_details.extend(detailed_results)
+                return detailed_results
+
+            # 모든 장소를 병렬로 처리
+            all_results = await asyncio.gather(
+                *[process_location(loc) for loc in search_intent["locations"]]
+            )
+            
+            # 결과 병합
+            all_place_details = []
+            for results in all_results:
+                all_place_details.extend(results)
             
             # 3. 최종 결과 정리
+            # 요약 메시지 생성
+            summary_prompt = ChatPromptTemplate.from_messages([
+                SystemMessage(content="""당신은 여행 정보 요약 전문가입니다.
+                주어진 장소 정보들과 여행 계획을 바탕으로 상세하고 명확한 요약 메시지를 작성해주세요.
+                다음 정보를 포함해주세요:
+                1. 여행 일정 개요 (기간, 주요 일정)
+                2. 검색된 주요 장소들의 종류와 수
+                3. 주요 관심사 (예: 호텔, 관광지, 음식점 등)
+                4. 예산 범위와 선호사항
+                5. 일별 주요 일정과 추천 활동
+                6. 특별한 추천 사항과 팁
+                
+                응답은 50문장보다 적게 작성해주세요."""),
+                HumanMessage(content=f"""여행 계획:
+                {json.dumps(plan, ensure_ascii=False, indent=2)}
+                
+                검색된 장소들:
+                {json.dumps(all_place_details, ensure_ascii=False, indent=2)}
+                
+                검색 의도:
+                {json.dumps(search_intent, ensure_ascii=False, indent=2)}
+                
+                사용자 선호사항:
+                {json.dumps(context.get('preferences', {}), ensure_ascii=False, indent=2)}""")
+            ])
+            
+            summary_response = await self.llm.ainvoke(summary_prompt.format_messages())
+            
             final_results = {
                 "status": "success",
-                "message": "장소 검색이 완료되었습니다.",
+                "message": summary_response.content,
                 "context": {
-                    "destination": input_data["context"]["destination"],
-                    "duration": input_data["context"].get("duration", "3박 4일"),
+                    "destination": context["destination"],
+                    "duration": context.get("duration", "3박 4일"),
                     "preferences": {
                         "places": all_place_details,
                         "search_intent": search_intent,
-                        "user_preferences": input_data["context"].get("preferences", {})
+                        "user_preferences": context.get("preferences", {})
                     }
                 }
             }
@@ -153,7 +197,7 @@ class SearchAgent(BaseAgent):
         base_url = "https://openapi.naver.com/v1/search/local.json"
         params = {
             "query": query,
-            "display": 10,
+            "display": 2,
             "start": 1,
             "sort": "random"
         }
@@ -170,78 +214,102 @@ class SearchAgent(BaseAgent):
         
         async with aiohttp.ClientSession() as session:
             try:
-                async with session.get(base_url, params=params, headers=headers) as response:
-                    print(f"Response status: {response.status}")
-                    print(f"Response URL: {str(response.url)}")  # 실제 요청된 URL 확인
-                    
-                    if response.status != 200:
-                        error_text = await response.text()
-                        print(f"Error response: {error_text}")
-                        raise Exception(f"Naver API request failed with status {response.status}: {error_text}")
-                    
-                    data = await response.json()
-                    print(f"Response data: {data}")
-                    
-                    # 검색 결과 변환
-                    places = []
-                    for item in data.get("items", []):
-                        place = {
-                            "id": item.get("link", ""),  # 고유 식별자로 link 사용
-                            "name": item.get("title", "").replace("<b>", "").replace("</b>", ""),
-                            "type": search_intent.get("search_type", "장소"),
-                            "location": {
-                                "address": item.get("address", ""),
-                                "road_address": item.get("roadAddress", ""),
-                                "coordinates": {
-                                    "x": item.get("mapx", ""),
-                                    "y": item.get("mapy", "")
-                                }
-                            },
-                            "category": item.get("category", ""),
-                            "description": item.get("description", ""),
-                            "contact": item.get("telephone", ""),
-                            "link": item.get("link", "")
-                        }
-                        places.append(place)
-                    
-                    return places
+                async with self.naver_semaphore:  # 네이버 API 호출 제한
+                    async with session.get(base_url, params=params, headers=headers) as response:
+                        print(f"Response status: {response.status}")
+                        print(f"Response URL: {str(response.url)}")  # 실제 요청된 URL 확인
+                        
+                        if response.status != 200:
+                            error_text = await response.text()
+                            print(f"Error response: {error_text}")
+                            raise Exception(f"Naver API request failed with status {response.status}: {error_text}")
+                        
+                        data = await response.json()
+                        print(f"Response data: {data}")
+                        
+                        # 검색 결과 변환
+                        places = []
+                        for item in data.get("items", []):
+                            place = {
+                                "id": item.get("link", ""),  # 고유 식별자로 link 사용
+                                "name": item.get("title", "").replace("<b>", "").replace("</b>", ""),
+                                "type": search_intent.get("search_type", "장소"),
+                                "location": {
+                                    "address": item.get("address", ""),
+                                    "road_address": item.get("roadAddress", ""),
+                                    "coordinates": {
+                                        "x": item.get("mapx", ""),
+                                        "y": item.get("mapy", "")
+                                    }
+                                },
+                                "category": item.get("category", ""),
+                                "description": item.get("description", ""),
+                                "contact": item.get("telephone", ""),
+                                "link": item.get("link", "")
+                            }
+                            places.append(place)
+                        
+                        return places
             except Exception as e:
                 print(f"Error during API call: {str(e)}")
                 raise
     
     async def _enrich_place_details(self, places: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """장소 상세 정보 수집"""
-        enriched_places = []
-        for place in places:
-            # LLM을 통한 장소 설명 생성
-            description_prompt = ChatPromptTemplate.from_messages([
-                SystemMessage(content="""당신은 여행 장소 설명 전문가입니다.
-                주어진 장소에 대한 매력적인 설명을 작성해주세요.
-                다음 정보를 포함해주세요:
-                1. 장소의 주요 특징
-                2. 방문하기 좋은 시간
-                3. 주변 관광지
-                4. 교통 정보
-                5. 방문 팁"""),
-                HumanMessage(content=f"장소: {place['name']}, 위치: {place['location']['address']}, 카테고리: {place['category']}")
-            ])
-            
-            description_response = await self.llm.ainvoke(description_prompt.format_messages())
-            
-            enriched_place = {
-                **place,
-                "description": description_response.content,
-                "details": {
-                    "contact": place.get("contact", ""),
-                    "website": place.get("link", ""),
-                    "category": place.get("category", ""),
-                    "coordinates": place["location"]["coordinates"],
-                    "address": {
-                        "street": place["location"]["road_address"],
-                        "full": place["location"]["address"]
+        async def enrich_place(place: Dict[str, Any]) -> Dict[str, Any]:
+            start_time = time.time()
+            print(f"Starting LLM call for place: {place['name']}")
+            try:
+                async with self.llm_semaphore:  # LLM API 호출 제한
+                    # LLM을 통한 장소 설명 생성
+                    description_prompt = ChatPromptTemplate.from_messages([
+                        SystemMessage(content="""당신은 여행 장소 설명 전문가입니다.
+                        주어진 장소에 대한 매력적인 설명을 작성해주세요.
+                        다음 정보를 포함해주세요:
+                        1. 장소의 주요 특징
+                        2. 방문하기 좋은 시간
+                        3. 주변 관광지
+                        4. 교통 정보
+                        5. 방문 팁"""),
+                        HumanMessage(content=f"장소: {place['name']}, 위치: {place['location']['address']}, 카테고리: {place['category']}")
+                    ])
+                    
+                    description_response = await self.llm.ainvoke(description_prompt.format_messages())
+                    end_time = time.time()
+                    print(f"Completed LLM call for {place['name']} in {end_time - start_time:.2f} seconds")
+                    
+                    return {
+                        **place,
+                        "description": description_response.content,
+                        "details": {
+                            "contact": place.get("contact", ""),
+                            "website": place.get("link", ""),
+                            "category": place.get("category", ""),
+                            "coordinates": place["location"]["coordinates"],
+                            "address": {
+                                "street": place["location"]["road_address"],
+                                "full": place["location"]["address"]
+                            }
+                        }
                     }
-                }
-            }
-            enriched_places.append(enriched_place)
+            except Exception as e:
+                end_time = time.time()
+                print(f"Failed LLM call for {place['name']} after {end_time - start_time:.2f} seconds: {str(e)}")
+                raise
         
-        return enriched_places
+        print(f"Processing {len(places)} places with semaphore limit {self.llm_semaphore._value}")
+        # 모든 장소의 설명을 병렬로 생성 (rate limited)
+        enriched_places = await asyncio.gather(
+            *[enrich_place(place) for place in places],
+            return_exceptions=True  # 예외가 발생해도 다른 요청은 계속 진행
+        )
+        
+        # 실패한 요청 필터링
+        successful_places = []
+        for place in enriched_places:
+            if isinstance(place, Exception):
+                print(f"Failed to process place: {str(place)}")
+            else:
+                successful_places.append(place)
+        
+        return successful_places

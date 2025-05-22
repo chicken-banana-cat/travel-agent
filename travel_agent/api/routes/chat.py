@@ -36,23 +36,37 @@ class ChatResponse(BaseModel):
 async def stream_response(message: str, session_id: str = None) -> AsyncGenerator[str, None]:
     """스트리밍 응답 생성기"""
     try:
-        # 현재 세션의 컨텍스트 가져오기
-        context = conversation_history.get(session_id, {}).get("context", {})
+        # 현재 세션의 컨텍스트와 이전 결과 가져오기
+        session_data = conversation_history.get(session_id, {})
+        context = session_data.get("context", {})
+        previous_result = session_data.get("previous_result", None)
         
         # Orchestrator를 통해 메시지 처리
         async for chunk in orchestrator.process_stream({
             "message": message,
-            "context": context
+            "context": context,
+            "previous_result": previous_result,
+            "plan": session_data.get("plan", None)
         }):
             if chunk["status"] in ["success", 'need_more_info']:
                 yield f"data: {json.dumps(chunk['result'])}\n\n"
                 
-                # 컨텍스트 업데이트
-                if session_id and 'current_context' in chunk["result"]:
+                # 컨텍스트와 이전 결과 업데이트
+                if session_id:
                     if session_id not in conversation_history:
                         conversation_history[session_id] = {}
-                    conversation_history[session_id]["context"] = chunk["result"]['current_context'] # status processing 도 메시지 보낼지 고민하
+                    if 'current_context' in chunk["result"]:
+                        conversation_history[session_id]["context"] = chunk["result"]['current_context']
+                    if chunk["status"] == "success":
+                        result = chunk["result"]
+
+                        if plan := result.get("plan"):
+                            conversation_history[session_id]["plan"] = plan
+                        else:
+                            conversation_history[session_id]["previous_result"] = chunk["result"]
             elif chunk["status"] == "processing":
+                if msg := chunk.get("output_message"):
+                    yield f"data: {json.dumps({'status': 'success', 'message': msg})}\n\n"
                 continue
             else:
                 yield f"data: {json.dumps({'error': 'Failed to process message'})}\n\n"

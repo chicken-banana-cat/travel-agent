@@ -33,7 +33,6 @@ const sendMessage = async () => {
   await scrollToBottom()
 
   isLoading.value = true
-  let currentMessageIndex = -1
 
   try {
     // EventSource를 사용하여 SSE 연결 (세션 ID 포함)
@@ -52,56 +51,50 @@ const sendMessage = async () => {
           return
         }
 
+        // 중복 메시지 체크를 위한 함수
+        const isDuplicateMessage = (content) => {
+          if (messages.value.length === 0) return false
+          const lastMessage = messages.value[messages.value.length - 1]
+          return lastMessage.type === 'bot' && lastMessage.content === content
+        }
+
         // 상태에 따른 처리
         switch (parsed.status) {
           case 'need_more_info':
             // 추가 정보 요청 메시지
-            if (currentMessageIndex === -1) {
+            if (!isDuplicateMessage(parsed.message)) {
               messages.value.push({ type: 'bot', content: parsed.message })
-              currentMessageIndex = messages.value.length - 1
-            } else {
-              messages.value[currentMessageIndex].content = parsed.message
             }
             break
 
           case 'processing':
             // 처리 중 상태 메시지
-            if (currentMessageIndex === -1) {
+            if (!isDuplicateMessage(parsed.result)) {
               messages.value.push({ type: 'bot', content: parsed.result })
-              currentMessageIndex = messages.value.length - 1
-            } else {
-              messages.value[currentMessageIndex].content = parsed.result
             }
             break
 
           case 'success':
             // 최종 결과 메시지
-            if (currentMessageIndex === -1) {
-              messages.value.push({ type: 'bot', content: parsed.result?.message || parsed.message })
-              currentMessageIndex = messages.value.length - 1
-            } else {
-              messages.value[currentMessageIndex].content = parsed.result?.message || parsed.message
+            const successMessage = parsed.result?.message || parsed.message
+            if (!isDuplicateMessage(successMessage)) {
+              messages.value.push({ type: 'bot', content: successMessage })
             }
             break
 
           default:
             // 기타 메시지 처리
-            if (currentMessageIndex === -1) {
-              messages.value.push({ type: 'bot', content: parsed.message || event.data })
-              currentMessageIndex = messages.value.length - 1
-            } else {
-              messages.value[currentMessageIndex].content = parsed.message || event.data
+            const defaultMessage = parsed.message || event.data
+            if (!isDuplicateMessage(defaultMessage)) {
+              messages.value.push({ type: 'bot', content: defaultMessage })
             }
         }
         scrollToBottom()
       } catch (e) {
         console.error('JSON 파싱 오류:', e, '원본 데이터:', event.data)
         // JSON 파싱 실패 시 일반 텍스트로 처리
-        if (currentMessageIndex === -1) {
+        if (!isDuplicateMessage(event.data)) {
           messages.value.push({ type: 'bot', content: event.data })
-          currentMessageIndex = messages.value.length - 1
-        } else {
-          messages.value[currentMessageIndex].content = event.data
         }
         scrollToBottom()
       }
@@ -110,9 +103,9 @@ const sendMessage = async () => {
     eventSource.onerror = (error) => {
       console.error('EventSource 오류:', error)
       eventSource.close()
-      messages.value.push({ 
-        type: 'error', 
-        content: '메시지 전송 중 오류가 발생했습니다.' 
+      messages.value.push({
+        type: 'error',
+        content: '메시지 전송 중 오류가 발생했습니다.'
       })
       isLoading.value = false
       scrollToBottom()
@@ -123,12 +116,12 @@ const sendMessage = async () => {
       try {
         const data = JSON.parse(event.data)
         if (data.error) {
-          const errorMessage = data.stacktrace 
+          const errorMessage = data.stacktrace
             ? `${data.error}\n\nStacktrace:\n${data.stacktrace}`
             : data.error
-          
-          messages.value.push({ 
-            type: 'error', 
+
+          messages.value.push({
+            type: 'error',
             content: errorMessage
           })
           scrollToBottom()
@@ -147,9 +140,9 @@ const sendMessage = async () => {
 
   } catch (error) {
     console.error('API 요청 오류:', error)
-    messages.value.push({ 
-      type: 'error', 
-      content: '메시지 전송 중 오류가 발생했습니다.' 
+    messages.value.push({
+      type: 'error',
+      content: '메시지 전송 중 오류가 발생했습니다.'
     })
     isLoading.value = false
     await scrollToBottom()

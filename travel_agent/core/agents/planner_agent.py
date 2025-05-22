@@ -255,6 +255,7 @@ class PlannerAgent(BaseAgent):
             return PlannerResponse(
                 status="success",
                 plan=final_plan,
+                message="여행 계획이 완료되었습니다. 다음 작업을 진행합니다."
             ).model_dump()
             
         except Exception as e:

@@ -9,6 +9,7 @@ from langgraph.pregel import Pregel
 from .search_agent import SearchAgent
 from .planner_agent import PlannerAgent
 from .calendar_agent import CalendarAgent
+from .mail_agent import MailAgent
 from ..config.settings import settings
 
 
@@ -40,7 +41,8 @@ class Orchestrator:
         self.agents = {
             "search": SearchAgent(),
             "planner": PlannerAgent(),
-            "calendar": CalendarAgent()
+            "calendar": CalendarAgent(),
+            "mail": MailAgent()
         }
 
         # LLM 초기화
@@ -63,15 +65,15 @@ class Orchestrator:
         """
         # need_more_info 상태인 경우 determine_next_steps로 라우팅
         if (
-            state.get("result") is not None and 
-            state.get("result", {}).get("status") == "need_more_info"
+                state.get("result") is not None and
+                state.get("result", {}).get("status") == "need_more_info"
         ):
             return "determine_next_steps"
-            
+
         # current_agent가 있는 경우 해당 에이전트로 라우팅
         if state.get("current_agent"):
             return state["current_agent"]
-            
+
         # 기본값으로 search 에이전트로 라우팅
         return "search"
 
@@ -87,21 +89,15 @@ class Orchestrator:
         # next_steps가 없으면 워크플로우 종료
         if not state["next_steps"]:
             return "end"
-            
+
         # 다음 단계 가져오기
         next_step = state["next_steps"][0]
         state["next_steps"] = state["next_steps"][1:]
-        
+
         # 다음 단계에 따라 적절한 에이전트 선택
-        if "search" in next_step.lower():
-            state["current_agent"] = "search"
-            return "search"
-        elif "plan" in next_step.lower():
-            state["current_agent"] = "planner"
-            return "planner"
-        elif "calendar" in next_step.lower():
-            state["current_agent"] = "calendar"
-            return "calendar"
+        if next_step in ["search", "planner", "calendar", "mail"]:
+            state["current_agent"] = next_step
+            return next_step
         else:
             state["current_agent"] = "analyze_intent"
             return "analyze_intent"
@@ -126,6 +122,7 @@ class Orchestrator:
         workflow.add_node("search", self._run_agent("search"))
         workflow.add_node("planner", self._run_agent("planner"))
         workflow.add_node("calendar", self._run_agent("calendar"))
+        workflow.add_node("mail", self._run_agent("mail"))
         workflow.add_node("determine_next_steps", self._determine_next_steps)
 
         # analyze_intent의 조건부 엣지
@@ -139,6 +136,7 @@ class Orchestrator:
                 "search": "search",
                 "planner": "planner",
                 "calendar": "calendar",
+                "mail": "mail",
                 "determine_next_steps": "determine_next_steps"
             }
         )
@@ -147,6 +145,7 @@ class Orchestrator:
         workflow.add_edge("search", "determine_next_steps")
         workflow.add_edge("planner", "determine_next_steps")
         workflow.add_edge("calendar", "determine_next_steps")
+        workflow.add_edge("mail", "determine_next_steps")
 
         # determine_next_steps의 조건부 엣지
         # 1. next_steps가 없으면 워크플로우 종료
@@ -159,6 +158,7 @@ class Orchestrator:
                 "planner": "planner",
                 "calendar": "calendar",
                 "analyze_intent": "analyze_intent",
+                "mail": "mail",
                 "end": END
             }
         )
@@ -176,6 +176,36 @@ class Orchestrator:
 
         # 현재 컨텍스트 가져오기
         current_context = state.get("context", {})
+
+        # 이메일 입력 처리
+        email = messages[-1].content.strip()
+        if "@" in email and "." in email:
+            # 이전 결과가 성공이고 여행 계획이 완성된 상태인 경우
+
+            if (
+                state.get("result") is not None and state["result"].get("previous_result") is not None and
+                state["result"]["previous_result"].get("status") == "success" and
+                state["result"]["previous_result"].get("is_complete_search", False)
+            ):
+                # 이메일을 컨텍스트에 추가
+                state["context"]["email"] = email
+                # mail agent로 라우팅
+                state["current_agent"] = "mail"
+                state["next_steps"] = ["mail"]
+                return state
+            else:
+                # 잘못된 이메일 형식이나 적절하지 않은 시점의 이메일 입력
+                state["result"] = {
+                    "status": "need_more_info",
+                    "message": "여행 계획이 완성된 후에 이메일을 입력해주세요.",
+                    "missing_fields": ["email"],
+                    "examples": {
+                        "email": "user@example.com"
+                    },
+                    "current_context": state["context"]
+                }
+                state["next_steps"] = []
+                return state
 
         # LLM을 사용하여 의도 분석
         prompt = ChatPromptTemplate.from_messages([
@@ -285,7 +315,8 @@ class Orchestrator:
                 # 현재 컨텍스트와 extracted_context에 있는 필드는 missing_info에서 제거
                 intent_analysis["missing_info"]["fields"] = [
                     field for field in missing_fields
-                    if not (is_field_in_context(field, current_context) or is_field_in_context(field, extracted_context))
+                    if
+                    not (is_field_in_context(field, current_context) or is_field_in_context(field, extracted_context))
                 ]
 
                 # missing_info가 비어있으면 제거
@@ -403,6 +434,9 @@ class Orchestrator:
                 "previous_result": state.get("result")  # 이전 결과 전달
             })
 
+            if agent_name == "search" and result.get("status") == "success":
+                result["is_complete_search"] = True
+
             # 결과 저장
             state["result"] = result
 
@@ -416,11 +450,6 @@ class Orchestrator:
             state["next_steps"] = []  # 결과가 없는 경우 워크플로우 종료
             return state
 
-        # need_more_info 상태인 경우 워크플로우 종료
-        if state["result"].get("status") == "need_more_info":
-            state["next_steps"] = []  # 워크플로우 종료
-            return state
-
         # 에러 상태인 경우
         if state["result"].get("status") != "success":
             state["next_steps"] = []  # 실패 시 워크플로우 종료
@@ -431,6 +460,56 @@ class Orchestrator:
             step["agent"] for step in state["workflow_history"]
             if "agent" in step
         ]
+
+        # planner와 search가 모두 실행되었는지 확인
+        has_planner = "planner" in executed_agents
+        has_search = "search" in executed_agents
+
+        # 두 에이전트가 모두 실행되었고, mail이 아직 실행되지 않은 경우
+        if has_planner and has_search and "mail" not in executed_agents:
+            # 메일 전송 여부 확인을 위한 프롬프트
+            mail_prompt = ChatPromptTemplate.from_messages([
+                SystemMessage(content="""당신은 여행 계획 조율자입니다.
+                현재까지의 작업 결과를 바탕으로 사용자에게 메일 전송 여부를 물어보세요.
+                
+                워크플로우 히스토리:
+                {history}
+                
+                현재 결과:
+                {result}
+                
+                응답 형식:
+                {
+                    "should_ask_email": true/false,
+                    "message": "사용자에게 보낼 메시지"
+                }"""),
+                HumanMessage(content="메일 전송 여부를 물어볼까요?")
+            ])
+
+            # 메일 전송 여부 결정
+            response = await self.llm.ainvoke(mail_prompt.format_messages(
+                history=str(state["workflow_history"]),
+                result=str(state["result"])
+            ))
+            mail_decision = json.loads(response.content)
+
+            if mail_decision["should_ask_email"]:
+                state["result"] = {
+                    "status": "need_more_info",
+                    "message": mail_decision["message"],
+                    "missing_fields": ["email"],
+                    "examples": {
+                        "email": "user@example.com"
+                    },
+                    "current_context": state["context"]
+                }
+                state["next_steps"] = []  # 워크플로우 종료
+                return state
+
+        # mail 에이전트가 실행된 경우 워크플로우 종료
+        if "mail" in executed_agents:
+            state["next_steps"] = []
+            return state
 
         # LLM을 사용하여 다음 단계 결정
         prompt = ChatPromptTemplate.from_messages([
@@ -450,11 +529,12 @@ class Orchestrator:
             - search: 장소 검색, 관광지 정보 요청, 호텔 검색 등
             - planner: 여행 계획 수립, 일정 조정, 예산 계획 등
             - calendar: 일정 등록, 일정 확인, 일정 수정 등
+            - mail: 여행 계획 메일 전송
             
             응답 형식:
             {
                 "is_complete": true/false,
-                "next_steps": ["search", "planner", "calendar"]  # 다음에 실행할 에이전트 목록
+                "next_steps": ["search", "planner", "calendar", "mail"]  # 다음에 실행할 에이전트 목록
             }
             
             주의사항:
@@ -470,7 +550,7 @@ class Orchestrator:
             result=str(state["result"]),
             executed_agents=str(executed_agents)
         ))
-        next_steps_analysis = json.loads(response.content)  # JSON 문자열을 안전하게 파싱
+        next_steps_analysis = json.loads(response.content)
 
         # 상태 업데이트
         if next_steps_analysis["is_complete"] or not next_steps_analysis["next_steps"]:
@@ -521,35 +601,42 @@ class Orchestrator:
         if not input_data.get("message"):
             yield {"status": "error", "result": "Invalid message"}
             return
-        
+
+        # 이전 메시지 히스토리 가져오기
+        previous_messages = [
+            HumanMessage(content=msg["content"]) if isinstance(msg, dict) else msg
+            for msg in input_data.get("messages", [])
+        ]
+
         # 초기 상태 설정
         initial_state = {
-            "messages": [HumanMessage(content=input_data["message"])],
+            "messages": [*previous_messages, HumanMessage(content=input_data["message"])],
             "current_agent": None,
             "context": input_data.get("context", {}),
-            "result": None,
-            "workflow_history": [],
+            "result": {"previous_result": input_data.get("previous_result"), "plan":input_data.get("plan")},  # 이전 결과 유지
+            "workflow_history": input_data.get("workflow_history", []),  # 이전 워크플로우 히스토리 유지
             "next_steps": []
         }
-        
+
         # 워크플로우 실행
         async for state in self.workflow.astream(initial_state):
             if not state:  # 상태가 None인 경우 건너뛰기
                 continue
-                
+
             # 현재 실행 중인 노드의 상태 가져오기
             try:
                 current_node = next(iter(state.keys()))
                 current_state = state[current_node]
             except (StopIteration, KeyError):  # 상태가 비어있거나 키가 없는 경우
                 continue
-            
+
             if not current_state:  # current_state가 None인 경우 건너뛰기
                 continue
-            
+
             # analyze_intent 노드 처리
             if current_node == "analyze_intent":
-                if current_state.get("result") is not None and current_state.get("result", {}).get("status") == "need_more_info":
+                if current_state.get("result") is not None and current_state.get("result", {}).get(
+                        "status") == "need_more_info":
                     yield {
                         "status": "need_more_info",
                         "result": current_state["result"],
@@ -558,22 +645,51 @@ class Orchestrator:
                 elif current_state.get("current_agent"):
                     yield {
                         "status": "processing",
-                        "result": f"Processing with {current_state['current_agent']} agent...",
-                        "messages": current_state["messages"]
+                        "result": current_state["result"],
+                        "messages": current_state["messages"],
+                        "output_message": f"입력된 정보 ({current_state['context'].get('destination', '')}, {current_state['context'].get('duration', '')})를 바탕으로 계획을 시작합니다.",
                     }
                 continue
-            
+
             # 일반적인 처리 상태
-            if current_state.get("result") and current_state["result"].get("status") != "need_more_info":
-                yield {
-                    "status": "success",
-                    "result": current_state["result"],
-                    "messages": current_state["messages"]
-                }
+            if current_state.get("result"):
+                if current_state["result"].get("status") == "processing":
+                    # 진행 상황 메시지 생성
+                    progress_message = None
+                    if current_node == "planner":
+                        progress_message = "여행 계획을 수립하고 있습니다..."
+                    elif current_node == "search":
+                        progress_message = "장소 정보를 검색하고 있습니다..."
+
+                    yield {
+                        "status": "processing",
+                        "result": current_state["result"],
+                        "messages": current_state["messages"],
+                        "output_message": progress_message
+                    }
+                elif current_state["result"].get("status") != "need_more_info":
+                    yield {
+                        "status": "success",
+                        "result": current_state["result"],
+                        "messages": current_state["messages"]
+                    }
+                else:
+                    yield {
+                        "status": "need_more_info",
+                        "result": current_state["result"],
+                        "messages": current_state["messages"]
+                    }
             elif current_state.get("current_agent"):
                 # 현재 에이전트의 상태를 스트리밍
+                progress_message = None
+                if current_state["current_agent"] == "planner":
+                    progress_message = "여행 계획 에이전트가 작업을 시작합니다..."
+                elif current_state["current_agent"] == "search":
+                    progress_message = "장소 검색 에이전트가 작업을 시작합니다..."
+
                 yield {
                     "status": "processing",
-                    "result": f"Processing with {current_state['current_agent']} agent...",
-                    "messages": current_state["messages"]
+                    "result": current_state["result"],
+                    "messages": current_state["messages"],
+                    "output_message": progress_message
                 }

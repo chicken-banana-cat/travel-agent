@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .header {
+            background-color: #4CAF50;
+            color: white;
+            padding: 20px;
+            text-align: center;
+            border-radius: 5px;
+        }
+        .section {
+            margin: 20px 0;
+            padding: 20px;
+            background-color: #f9f9f9;
+            border-radius: 5px;
+        }
+        .day-plan {
+            margin: 10px 0;
+            padding: 10px;
+            background-color: white;
+            border-left: 4px solid #4CAF50;
+        }
+        .budget-item {
+            display: flex;
+            justify-content: space-between;
+            margin: 5px 0;
+        }
+        .total {
+            font-weight: bold;
+            border-top: 2px solid #4CAF50;
+            margin-top: 10px;
+            padding-top: 10px;
+        }
+        .tip {
+            background-color: #fff3cd;
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>{{ destination }} 여행 계획</h1>
+        <p>기간: {{ duration }}</p>
+    </div>
+
+    <div class="section">
+        <h2>일정</h2>
+        {% for day in itinerary %}
+        <div class="day-plan">
+            <h3>Day {{ day.day }}</h3>
+            {% for activity in day.activities %}
+            <div>
+                <strong>{{ activity.time }}</strong> - {{ activity.activity }}
+                <br>
+                장소: {{ activity.location }}
+                <br>
+                소요시간: {{ activity.duration }} | 비용: {{ activity.cost }}원
+            </div>
+            {% endfor %}
+        </div>
+        {% endfor %}
+    </div>
+
+    <div class="section">
+        <h2>예산 계획</h2>
+        <div class="budget-item">
+            <span>교통비:</span>
+            <span>{{ budget.transportation.estimated }}원</span>
+        </div>
+        <div class="budget-item">
+            <span>숙박비:</span>
+            <span>{{ budget.accommodation.estimated }}원</span>
+        </div>
+        <div class="budget-item">
+            <span>식비:</span>
+            <span>{{ budget.food.estimated }}원</span>
+        </div>
+        <div class="budget-item">
+            <span>활동비:</span>
+            <span>{{ budget.activities.estimated }}원</span>
+        </div>
+        <div class="budget-item total">
+            <span>총 예산:</span>
+            <span>{{ budget.total }}원</span>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>추천 장소</h2>
+        {% for rec in recommendations %}
+        <h3>{{ rec.category }}</h3>
+        <ul>
+            {% for item in rec.get('items', []) %}
+            <li>{{ item }}</li>
+            {% endfor %}
+        </ul>
+        {% endfor %}
+    </div>
+
+    <div class="section">
+        <h2>여행 팁</h2>
+        {% for tip in tips %}
+        <div class="tip">{{ tip }}</div>
+        {% endfor %}
+    </div>
+
+    <div class="section">
+        <h2>장소 정보</h2>
+        {% if places %}
+            {% for place in places %}
+            <div class="day-plan">
+                <h3>{{ place.name }}</h3>
+                <p>{{ place.description }}</p>
+                {% if place.location and place.location.address %}
+                <p>주소: {{ place.location.address }}</p>
+                {% endif %}
+                {% if place.contact %}
+                <p>연락처: {{ place.contact }}</p>
+                {% endif %}
+                {% if place.link %}
+                <p>링크: <a href="{{ place.link }}">{{ place.link }}</a></p>
+                {% endif %}
+            </div>
+            {% endfor %}
+        {% else %}
+            <p>장소 정보가 없습니다.</p>
+        {% endif %}
+    </div>
+</body>
+</html> 
