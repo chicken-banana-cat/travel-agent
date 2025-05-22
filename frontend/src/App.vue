@@ -24,6 +24,53 @@ const scrollToBottom = async () => {
   }
 }
 
+// 여행 계획 포맷팅 함수
+const formatTravelPlan = (plan) => {
+  if (!plan) return ''
+
+  let formattedPlan = ''
+
+  // 일정 표시
+  formattedPlan += '📅 여행 일정\n\n'
+  plan.itinerary.forEach(day => {
+    formattedPlan += `Day ${day.day}\n`
+    day.activities.forEach(activity => {
+      formattedPlan += `⏰ ${activity.time} - ${activity.activity}\n`
+      formattedPlan += `📍 ${activity.location} (${activity.duration})\n`
+      if (activity.cost > 0) {
+        formattedPlan += `💰 ${activity.cost.toLocaleString()}원\n`
+      }
+      formattedPlan += '\n'
+    })
+  })
+
+  // 예산 표시
+  formattedPlan += '💰 예산 계획\n\n'
+  formattedPlan += `교통비: ${plan.budget.transportation.estimated.toLocaleString()}원\n`
+  formattedPlan += `숙박비: ${plan.budget.accommodation.estimated.toLocaleString()}원\n`
+  formattedPlan += `식비: ${plan.budget.food.estimated.toLocaleString()}원\n`
+  formattedPlan += `활동비: ${plan.budget.activities.estimated.toLocaleString()}원\n`
+  formattedPlan += `총 예산: ${plan.budget.total.toLocaleString()}원\n\n`
+
+  // 추천 장소 표시
+  formattedPlan += '🌟 추천 장소\n\n'
+  plan.recommendations.forEach(rec => {
+    formattedPlan += `${rec.category}:\n`
+    rec.items.forEach(item => {
+      formattedPlan += `- ${item}\n`
+    })
+    formattedPlan += '\n'
+  })
+
+  // 여행 팁 표시
+  formattedPlan += '💡 여행 팁\n\n'
+  plan.tips.forEach(tip => {
+    formattedPlan += `• ${tip}\n`
+  })
+
+  return formattedPlan
+}
+
 const sendMessage = async () => {
   if (!userInput.value.trim() || isLoading.value) return
 
@@ -75,10 +122,19 @@ const sendMessage = async () => {
             break
 
           case 'success':
+            console.log(parsed)
             // 최종 결과 메시지
-            const successMessage = parsed.result?.message || parsed.message
-            if (!isDuplicateMessage(successMessage)) {
-              messages.value.push({ type: 'bot', content: successMessage })
+            if (parsed.plan) {
+              // 여행 계획이 있는 경우 포맷팅하여 표시
+              const formattedPlan = formatTravelPlan(parsed.plan)
+              if (!isDuplicateMessage(formattedPlan)) {
+                messages.value.push({ type: 'bot', content: formattedPlan })
+              }
+            } else {
+              const successMessage = parsed.message
+              if (!isDuplicateMessage(successMessage)) {
+                messages.value.push({ type: 'bot', content: successMessage })
+              }
             }
             break
 
@@ -216,6 +272,7 @@ onMounted(() => {
   padding: 0.8rem;
   border-radius: 1rem;
   word-wrap: break-word;
+  white-space: pre-wrap;  /* 여행 계획 포맷팅을 위해 추가 */
 }
 
 .user {

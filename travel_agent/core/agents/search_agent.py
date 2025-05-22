@@ -188,12 +188,10 @@ class SearchAgent(BaseAgent):
         if not self.naver_client_id or not self.naver_client_secret:
             raise ValueError("Naver API credentials are not configured")
         
-        # 검색 쿼리 구성 - 단순히 장소명만 사용
         query = search_intent.get("name", "")
         if not query:
             return []
         
-        # API 요청 URL 구성
         base_url = "https://openapi.naver.com/v1/search/local.json"
         params = {
             "query": query,
@@ -202,57 +200,91 @@ class SearchAgent(BaseAgent):
             "sort": "random"
         }
         
-        # 실제 요청 URL 확인
-        request_url = f"{base_url}?{'&'.join(f'{k}={v}' for k, v in params.items())}"
-        print(f"Request URL: {request_url}")
-        
         headers = {
             "X-Naver-Client-Id": self.naver_client_id,
             "X-Naver-Client-Secret": self.naver_client_secret,
             "Accept": "application/json"
         }
         
+        return await self._execute_search_with_retry(base_url, params, headers, search_intent)
+
+    async def _execute_search_with_retry(
+        self, 
+        base_url: str, 
+        params: Dict[str, Any], 
+        headers: Dict[str, str],
+        search_intent: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """재시도 로직이 포함된 검색 실행"""
+        max_retries = 3
+        retry_count = 0
+        retry_delay = 10
+
         async with aiohttp.ClientSession() as session:
-            try:
-                async with self.naver_semaphore:  # 네이버 API 호출 제한
-                    async with session.get(base_url, params=params, headers=headers) as response:
-                        print(f"Response status: {response.status}")
-                        print(f"Response URL: {str(response.url)}")  # 실제 요청된 URL 확인
-                        
-                        if response.status != 200:
-                            error_text = await response.text()
-                            print(f"Error response: {error_text}")
-                            raise Exception(f"Naver API request failed with status {response.status}: {error_text}")
-                        
-                        data = await response.json()
-                        print(f"Response data: {data}")
-                        
-                        # 검색 결과 변환
-                        places = []
-                        for item in data.get("items", []):
-                            place = {
-                                "id": item.get("link", ""),  # 고유 식별자로 link 사용
-                                "name": item.get("title", "").replace("<b>", "").replace("</b>", ""),
-                                "type": search_intent.get("search_type", "장소"),
-                                "location": {
-                                    "address": item.get("address", ""),
-                                    "road_address": item.get("roadAddress", ""),
-                                    "coordinates": {
-                                        "x": item.get("mapx", ""),
-                                        "y": item.get("mapy", "")
-                                    }
-                                },
-                                "category": item.get("category", ""),
-                                "description": item.get("description", ""),
-                                "contact": item.get("telephone", ""),
-                                "link": item.get("link", "")
-                            }
-                            places.append(place)
-                        
-                        return places
-            except Exception as e:
-                print(f"Error during API call: {str(e)}")
-                raise
+            while retry_count < max_retries:
+                try:
+                    return await self._make_search_request(
+                        session, base_url, params, headers, search_intent
+                    )
+                except Exception as e:
+                    retry_count += 1
+                    if retry_count >= max_retries:
+                        print(f"Error during API call: {str(e)}")
+                        raise
+                    
+                    print(f"Error during API call: {str(e)}. Retrying in {retry_delay} seconds... (Attempt {retry_count}/{max_retries})")
+                    await asyncio.sleep(retry_delay)
+
+    async def _make_search_request(
+        self,
+        session: aiohttp.ClientSession,
+        base_url: str,
+        params: Dict[str, Any],
+        headers: Dict[str, str],
+        search_intent: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """단일 검색 요청 실행"""
+        async with self.naver_semaphore:
+            async with session.get(base_url, params=params, headers=headers) as response:
+                print(f"Response status: {response.status}")
+                print(f"Response URL: {str(response.url)}")
+                
+                if response.status == 429:
+                    raise Exception("Rate limit exceeded")
+                
+                if response.status != 200:
+                    error_text = await response.text()
+                    print(f"Error response: {error_text}")
+                    raise Exception(f"Naver API request failed with status {response.status}: {error_text}")
+                
+                data = await response.json()
+                print(f"Response data: {data}")
+                
+                return self._convert_search_results(data, search_intent)
+
+    def _convert_search_results(self, data: Dict[str, Any], search_intent: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """검색 결과를 장소 객체로 변환"""
+        places = []
+        for item in data.get("items", []):
+            place = {
+                "id": item.get("link", ""),
+                "name": item.get("title", "").replace("<b>", "").replace("</b>", ""),
+                "type": search_intent.get("search_type", "장소"),
+                "location": {
+                    "address": item.get("address", ""),
+                    "road_address": item.get("roadAddress", ""),
+                    "coordinates": {
+                        "x": item.get("mapx", ""),
+                        "y": item.get("mapy", "")
+                    }
+                },
+                "category": item.get("category", ""),
+                "description": item.get("description", ""),
+                "contact": item.get("telephone", ""),
+                "link": item.get("link", "")
+            }
+            places.append(place)
+        return places
     
     async def _enrich_place_details(self, places: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """장소 상세 정보 수집"""
