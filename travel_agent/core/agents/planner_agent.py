@@ -70,7 +70,7 @@ class PlannerAgent(BaseAgent):
     
     async def validate(self, input_data: Dict[str, Any]) -> bool:
         """계획 요구사항 유효성 검증"""
-        required_fields = ["destination", "duration", "preferences"]
+        required_fields = ["departure_location", "departure_date", "destination", "duration", "preferences"]
         return all(field in input_data for field in required_fields)
     
     async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -81,7 +81,7 @@ class PlannerAgent(BaseAgent):
             return PlannerResponse(
                 status="error",
                 error="Invalid planning requirements",
-                message="필수 요구사항(destination, duration, preferences)이 누락되었습니다."
+                message="필수 요구사항(departure_location, departure_date, destination, duration, preferences)이 누락되었습니다."
             ).model_dump()
         
         try:
@@ -161,6 +161,8 @@ class PlannerAgent(BaseAgent):
                     "tips": ["여행 팁"]
                 }"""),
                 HumanMessage(content=f"""여행 계획을 수립해주세요:
+                출발지: {context['departure_location']}
+                출발 날짜: {context['departure_date']}
                 목적지: {context['destination']}
                 기간: {context['duration']}
                 선호사항: {context['preferences']}""")

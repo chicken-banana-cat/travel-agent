@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, TypedDict, Annotated, Literal, AsyncGenerator
+from typing import Any, Dict, List, Optional, TypedDict, AsyncGenerator
 import json
 from langgraph.graph import StateGraph, END
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
@@ -224,8 +224,10 @@ class Orchestrator:
                 "type": "검색 유형 (선택)"
               }}
             - planner: {{
-                "destination": "여행지 (선택)",
-                "duration": "여행 기간 (선택)",
+                "departure_location": "출발지 (필수)",
+                "departure_date": "출발 날짜 (필수)",
+                "destination": "여행지 (필수)",
+                "duration": "여행 기간 (필수)",
                 "preferences": {{
                     "budget": "예산 (선택)",
                     "activities": ["선호 활동 (선택)"],
@@ -280,6 +282,8 @@ class Orchestrator:
 
         # 컨텍스트를 구조화된 JSON으로 전달
         formatted_context = {
+            "departure_location": current_context.get("departure_location"),
+            "departure_date": current_context.get("departure_date"),
             "destination": current_context.get("destination"),
             "duration": current_context.get("duration"),
             "preferences": {
@@ -331,6 +335,8 @@ class Orchestrator:
                     "type": None
                 },
                 "planner": {
+                    "departure_location": None,
+                    "departure_date": None,
                     "destination": None,
                     "duration": None,
                     "preferences": {
@@ -397,8 +403,10 @@ class Orchestrator:
             state["result"] = {
                 "status": "need_more_info",
                 "message": response.content,
-                "missing_fields": ["destination", "duration", "preferences"],
+                "missing_fields": ["departure_location", "departure_date", "destination", "duration", "preferences"],
                 "examples": {
+                    "departure_location": "서울",
+                    "departure_date": "2024-05-01",
                     "destination": "제주도",
                     "duration": "3박 4일",
                     "preferences": {
@@ -642,12 +650,12 @@ class Orchestrator:
                         "result": current_state["result"],
                         "messages": current_state["messages"]
                     }
-                elif current_state.get("current_agent"):
+                elif agent := current_state.get("current_agent"):
                     yield {
                         "status": "processing",
                         "result": current_state["result"],
                         "messages": current_state["messages"],
-                        "output_message": f"입력된 정보 ({current_state['context'].get('destination', '')}, {current_state['context'].get('duration', '')})를 바탕으로 계획을 시작합니다.",
+                        "output_message": f"입력된 정보 ({current_state['context'].get('destination', '')}, {current_state['context'].get('duration', '')})를 바탕으로 {agent}작업을 시작합니다.",
                     }
                 continue
 

@@ -2,7 +2,6 @@ from typing import Any, Dict
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-import os
 from jinja2 import Template
 from pathlib import Path
 
