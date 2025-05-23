@@ -71,6 +71,27 @@ const formatTravelPlan = (plan) => {
   return formattedPlan
 }
 
+// 추천 여행지 포맷팅 함수
+const formatRecommendations = (recommendations) => {
+  if (!recommendations || !recommendations.length) return ''
+
+  let formattedText = '🌟 추천 여행지\n\n'
+  
+  recommendations.forEach(rec => {
+    formattedText += `📍 ${rec.name}\n`
+    formattedText += `📝 ${rec.reason}\n`
+    formattedText += `⏰ 추천 시기: ${rec.best_time}\n`
+    formattedText += `💰 예상 비용: ${rec.estimated_budget}\n`
+    formattedText += `✨ 하이라이트:\n`
+    rec.highlights.forEach(highlight => {
+      formattedText += `  • ${highlight}\n`
+    })
+    formattedText += '\n'
+  })
+
+  return formattedText
+}
+
 const sendMessage = async () => {
   if (!userInput.value.trim() || isLoading.value) return
 
@@ -129,6 +150,15 @@ const sendMessage = async () => {
               const formattedPlan = formatTravelPlan(parsed.plan)
               if (!isDuplicateMessage(formattedPlan)) {
                 messages.value.push({ type: 'bot', content: formattedPlan })
+              }
+            } else if (parsed.recommendations) {
+              // 추천 여행지가 있는 경우 포맷팅하여 표시
+              if (parsed.message) {
+                messages.value.push({ type: 'bot', content: parsed.message })
+              }
+              const formattedRecommendations = formatRecommendations(parsed.recommendations)
+              if (!isDuplicateMessage(formattedRecommendations)) {
+                messages.value.push({ type: 'bot', content: formattedRecommendations })
               }
             } else {
               const successMessage = parsed.message

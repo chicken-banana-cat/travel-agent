@@ -3,11 +3,12 @@ import json
 import traceback
 import logging
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from travel_agent.core.agents.orchestrator import Orchestrator
+from ...utils.cache_client import cache_client
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO)
@@ -15,9 +16,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 orchestrator = Orchestrator()
-
-# 세션별 대화 히스토리 저장
-conversation_history: Dict[str, List[Dict]] = {}
 
 
 class ChatRequest(BaseModel):
@@ -37,33 +35,43 @@ async def stream_response(message: str, session_id: str = None) -> AsyncGenerato
     """스트리밍 응답 생성기"""
     try:
         # 현재 세션의 컨텍스트와 이전 결과 가져오기
-        session_data = conversation_history.get(session_id, {})
+        session_data = cache_client.get_conversation_history(session_id) if session_id else {}
         context = session_data.get("context", {})
-        previous_result = session_data.get("previous_result", None)
+        results = session_data.get("results", None)
         
         # Orchestrator를 통해 메시지 처리
         async for chunk in orchestrator.process_stream({
             "message": message,
             "context": context,
-            "previous_result": previous_result,
-            "plan": session_data.get("plan", None)
+            "plan": session_data.get("plan", None),
+            "session_id": session_id
         }):
             if chunk["status"] in ["success", 'need_more_info']:
                 yield f"data: {json.dumps(chunk['result'])}\n\n"
                 
                 # 컨텍스트와 이전 결과 업데이트
                 if session_id:
-                    if session_id not in conversation_history:
-                        conversation_history[session_id] = {}
                     if 'current_context' in chunk["result"]:
-                        conversation_history[session_id]["context"] = chunk["result"]['current_context']
+                        context = chunk["result"]['current_context']
                     if chunk["status"] == "success":
                         result = chunk["result"]
 
                         if plan := result.get("plan"):
-                            conversation_history[session_id]["plan"] = plan
+                            cache_client.add_message(session_id, {
+                                "type": "plan",
+                                "data": plan
+                            })
                         else:
-                            conversation_history[session_id]["previous_result"] = chunk["result"]
+                            if r := results:
+                                if r[-1] != chunk["result"]:
+                                    r.append(chunk["result"])
+                            else:
+                                results = [chunk["result"]]
+                            
+                            cache_client.add_message(session_id, {
+                                "type": "result",
+                                "data": chunk["result"]
+                            })
             elif chunk["status"] == "processing":
                 if msg := chunk.get("output_message"):
                     yield f"data: {json.dumps({'status': 'success', 'message': msg})}\n\n"
@@ -87,38 +95,32 @@ async def stream_response(message: str, session_id: str = None) -> AsyncGenerato
         yield f"event: error\ndata: {json.dumps(error_data)}\n\n"
         yield "event: complete\ndata: {}\n\n"
 
-#
-# @router.post("/chat")
-# async def chat(request: ChatRequest) -> StreamingResponse:
-#     """채팅 엔드포인트"""
-#     try:
-#         # 현재 세션의 대화 히스토리 가져오기
-#         messages = conversation_history.get(request.session_id, [])
-#
-#         async def generate():
-#             async for chunk in orchestrator.process_stream({
-#                 "message": request.message,
-#                 "messages": messages
-#             }):
-#                 if chunk["status"] in ["success", "need_more_info"]:
-#                     # 응답에 메시지 히스토리 포함
-#                     yield f"data: {json.dumps(chunk['result'])}\n\n"
-#
-#                     # 대화 히스토리 업데이트
-#                     if "messages" in chunk:
-#                         conversation_history[request.session_id] = chunk["messages"]
-#                 else:
-#                     yield f"data: {json.dumps({'error': 'Failed to process message'})}\n\n"
-#
-#         return StreamingResponse(
-#             generate(),
-#             media_type="text/event-stream"
-#         )
-#     except Exception as e:
-#         logging.error(f"Error in chat endpoint: {str(e)}")
-#         logging.error(traceback.format_exc())
-#         raise HTTPException(status_code=500, detail=str(e))
 
+@router.post("/chat")
+async def chat(user_id: str, message: str):
+    try:
+        # 캐시에서 대화 기록 가져오기
+        messages = cache_client.get_conversation_history(user_id)
+
+        # 새 메시지 추가
+        new_message = {"role": "user", "content": message}
+        cache_client.add_message(user_id, new_message)
+        messages.append(new_message)
+
+        # 여기에 에이전트 처리 로직 추가
+        # ...
+
+        return {"status": "success", "messages": messages}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/chat/{user_id}")
+async def clear_chat(user_id: str):
+    try:
+        cache_client.clear_conversation(user_id)
+        return {"status": "success", "message": "대화 기록이 삭제되었습니다."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/chat")
 async def chat(message: str, session_id: str = None) -> StreamingResponse:

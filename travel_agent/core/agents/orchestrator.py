@@ -10,19 +10,11 @@ from .search_agent import SearchAgent
 from .planner_agent import PlannerAgent
 from .calendar_agent import CalendarAgent
 from .mail_agent import MailAgent
+from .recommendation_agent import RecommendationAgent
 from ..config.settings import settings
 from ...tasks import process_search_and_mail
-
-
-def update_dict(d1: Dict, d2: Dict) -> Dict:
-    """d2의 값이 None이 아닌 경우에만 d1을 업데이트"""
-    result = d1.copy()
-    for k, v in d2.items():
-        if isinstance(v, dict) and k in result and isinstance(result[k], dict):
-            result[k] = update_dict(result[k], v)
-        elif v is not None:
-            result[k] = v
-    return result
+from ...utils import update_dict
+from ...utils.cache_client import cache_client
 
 
 class AgentState(TypedDict):
@@ -33,6 +25,7 @@ class AgentState(TypedDict):
     result: Optional[Dict[str, Any]]
     workflow_history: List[Dict[str, Any]]
     next_steps: List[str]
+    session_id: str
 
 
 class Orchestrator:
@@ -43,7 +36,8 @@ class Orchestrator:
             "search": SearchAgent(),
             "planner": PlannerAgent(),
             "calendar": CalendarAgent(),
-            "mail": MailAgent()
+            "mail": MailAgent(),
+            "recommendation": RecommendationAgent()
         }
 
         # LLM 초기화
@@ -96,7 +90,7 @@ class Orchestrator:
         state["next_steps"] = state["next_steps"][1:]
 
         # 다음 단계에 따라 적절한 에이전트 선택
-        if next_step in ["search", "planner", "calendar", "mail"]:
+        if next_step in ["search", "planner", "calendar", "mail", "recommendation"]:
             state["current_agent"] = next_step
             return next_step
         else:
@@ -124,12 +118,10 @@ class Orchestrator:
         workflow.add_node("planner", self._run_agent("planner"))
         workflow.add_node("calendar", self._run_agent("calendar"))
         workflow.add_node("mail", self._run_agent("mail"))
+        workflow.add_node("recommendation", self._run_agent("recommendation"))
         workflow.add_node("determine_next_steps", self._determine_next_steps)
 
         # analyze_intent의 조건부 엣지
-        # 1. need_more_info 상태면 determine_next_steps로
-        # 2. current_agent가 있으면 해당 에이전트로
-        # 3. 그 외의 경우 search로 라우팅
         workflow.add_conditional_edges(
             "analyze_intent",
             self._get_next_node,
@@ -138,6 +130,7 @@ class Orchestrator:
                 "planner": "planner",
                 "calendar": "calendar",
                 "mail": "mail",
+                "recommendation": "recommendation",
                 "determine_next_steps": "determine_next_steps"
             }
         )
@@ -147,6 +140,7 @@ class Orchestrator:
         workflow.add_edge("planner", "determine_next_steps")
         workflow.add_edge("calendar", "determine_next_steps")
         workflow.add_edge("mail", "determine_next_steps")
+        workflow.add_edge("recommendation", "determine_next_steps")
 
         # determine_next_steps의 조건부 엣지
         # 1. next_steps가 없으면 워크플로우 종료
@@ -160,6 +154,7 @@ class Orchestrator:
                 "calendar": "calendar",
                 "analyze_intent": "analyze_intent",
                 "mail": "mail",
+                "recommendation": "recommendation",
                 "end": END
             }
         )
@@ -175,13 +170,16 @@ class Orchestrator:
         if not messages:
             return state
 
-        # 현재 컨텍스트 가져오기
-        current_context = state.get("context", {})
+
+
+        session_id = state["session_id"]
+        session_data = cache_client.get_conversation_history(session_id)
+
         # 이메일 입력 처리
         email = messages[-1].content.strip()
-        if "@" in email and "." in email and state.get('result') is not None and state['result'].get('plan') is not None:
-            plan = state['result']['plan']
-            context = state['context']
+        if "@" in email and "." in email and session_data.get("plan"):
+            plan = session_data["plan"][-1]["data"]
+            context = session_data["context"][-1]["data"]
             # 이메일을 컨텍스트에 추가
             process_search_and_mail.delay(
                 email=email,
@@ -197,61 +195,80 @@ class Orchestrator:
             }
             state["next_steps"] = []
             return state
+        # 현재 컨텍스트 가져오기
 
+        before_primary_intent = session_data.get("primary_intent", [])
+        before_contexts = session_data.get("context", [])
+        if before_contexts:
+            current_context = before_contexts[-1].get("data", {})
+        else:
+            current_context = {}
+
+        last_collected_info = session_data.get("collected_info", [])
+        if last_collected_info:
+            last_collected_info = last_collected_info[-1]["data"]
+        before_primary_intent = session_data.get("primary_intent", [])
+        if before_primary_intent:
+            before_primary_intent = before_primary_intent[-1]["data"]
         # LLM을 사용하여 의도 분석
         prompt = ChatPromptTemplate.from_messages([
             SystemMessagePromptTemplate.from_template("""당신은 여행 계획 조율자입니다.
             사용자의 메시지를 분석하여 어떤 에이전트가 처리해야 할지 결정하세요.
             
             가능한 의도:
-            1. search: 장소 검색, 관광지 정보 요청, 호텔 검색 등
-            2. planner: 여행 계획 수립, 일정 조정, 예산 계획 등
-            3. calendar: 일정 등록, 일정 확인, 일정 수정 등
+            1. planner: 여행 계획 수립, 일정 조정, 예산 계획 등
+            2. calendar: 일정 등록, 일정 확인, 일정 수정 등
+            3. recommendation: 여행지 추천, 여행 스타일 추천, 맞춤형 여행 계획 추천 등
             
-            각 에이전트별 컨텍스트 (필수는 아님, 가능한 정보만 제공):
-            - search: {{
-                "query": "검색어 (선택)",
-                "location": "검색 지역 (선택)",
-                "type": "검색 유형 (선택)"
-              }}
+            각 에이전트별 컨텍스트 (필수):
             - planner: {{
                 "departure_location": "출발지 (필수)",
                 "departure_date": "출발 날짜 (필수)",
                 "destination": "여행지 (필수)",
                 "duration": "여행 기간 (필수)",
                 "preferences": {{
-                    "budget": "예산 (선택)",
-                    "activities": ["선호 활동 (선택)"],
-                    "accommodation": "숙박 선호도 (선택)",
-                    "transportation": "교통수단 선호도 (선택)"
+                    "budget": "예산 (필수)",
+                    "activities": ["선호 활동 (필수)"],
+                    "accommodation": "숙박 선호도 (필수)",
+                    "transportation": "교통수단 선호도 (필수)"
                 }}
               }}
-            - calendar: {{
-                "event_details": {{
-                    "title": "일정 제목 (선택)",
-                    "start_date": "시작일 (선택)",
-                    "end_date": "종료일 (선택)",
-                    "location": "장소 (선택)",
-                    "description": "설명 (선택)"
+            - recommendation: {{
+                "recommendation_step": "preferences|destination",
+                "collected_info": {{
+                    "travel_style": "여행 스타일",
+                    "activities": ["선호 활동들"],
+                    "budget": "예산 범위",
+                    "accommodation": "숙박 선호도",
+                    "transportation": "교통수단 선호도"
                 }}
               }}
             
             현재까지의 컨텍스트:
             {current_context}
             
+            이전 결과 데이터:
+            {last_collected_info}
+            
             중요: 
             1. 위의 현재 컨텍스트에 이미 있는 정보는 missing_info에 포함하지 마세요.
             2. 현재 컨텍스트의 정보를 먼저 확인하고, 그 다음에 새로운 정보를 추출하세요.
             3. 예를 들어, destination이 이미 컨텍스트에 있다면 missing_info의 fields에 포함시키지 마세요.
-            4. 현재 컨텍스트의 정보는 그대로 유지하고, 새로운 정보만 추가하세요.
-            5. 현재 컨텍스트의 값이 None이거나 빈 리스트인 경우에는 해당 필드가 아직 제공되지 않은 것으로 간주하세요.
+            4. 현재 컨텍스트, 이전 결과 데이터의 정보는 그대로 유지하고, 새로운 정보만 추가하세요.
+            5. 현재 컨텍스트, 이전 결과 데이터의 값이 None이거나 빈 리스트인 경우에는 해당 필드가 아직 제공되지 않은 것으로 간주하세요.
+            6. 이전에 추천을 통해서 정보를 얻었다면, 여행에 필요한 정보가 어느정도 채워질 때까지 추천을 하게 하세요.
+            7. destination 정보가 없으면, planner를 쓰지 말고, destination 정보가 있으면, 이전 결과 데이터를 바탕으로 planner에 대한 extracted_context를 추출하세요.
+            8. 사용자의 메시지에서 destination 정보를 추출했다면:
+               - primary_intent를 "planner"로 설정하세요.
+               - 이전 recommendation 단계에서 수집된 정보(preferences, activities 등)를 planner의 extracted_context에 포함시키세요.
+               - recommendation 단계에서 수집된 정보가 있다면, 해당 정보를 planner의 preferences에 매핑하세요.
             
             메시지에서 직접 추출할 수 있는 정보는 extracted_context에 포함시켜주세요.
             현재 컨텍스트의 정보와 새로운 정보를 합쳐서 최종 컨텍스트를 구성하세요.
             
             응답은 반드시 다음 JSON 형식으로만 제공하세요. 다른 텍스트는 포함하지 마세요:
             {{
-                "primary_intent": "search|planner|calendar",
+                "primary_intent": "planner|recommendation",
                 "confidence": 0.0-1.0,
                 "required_context": ["field1", "field2"],
                 "suggested_next_steps": ["step1", "step2"],
@@ -268,7 +285,7 @@ class Orchestrator:
                     }}
                 }}
             }}"""),
-            HumanMessage(content=messages[-1].content)  # 현재 메시지 직접 전달
+            HumanMessage(content=messages[-1].content)
         ])
 
         # 컨텍스트를 구조화된 JSON으로 전달
@@ -282,11 +299,21 @@ class Orchestrator:
                 "activities": current_context.get("preferences", {}).get("activities", []),
                 "accommodation": current_context.get("preferences", {}).get("accommodation"),
                 "transportation": current_context.get("preferences", {}).get("transportation")
+            },
+            "recommendation": {
+                "recommendation_step": current_context.get("recommendation_step"),
+                "collected_info": {
+                    "travel_style": current_context.get("collected_info", {}).get("travel_style"),
+                    "activities": current_context.get("collected_info", {}).get("activities", []),
+                    "budget": current_context.get("collected_info", {}).get("budget"),
+                    "accommodation": current_context.get("collected_info", {}).get("accommodation"),
+                    "transportation": current_context.get("collected_info", {}).get("transportation")
+                }
             }
         }
 
         pp = prompt.format_messages(
-            current_context=json.dumps(formatted_context, ensure_ascii=False, indent=2)
+            current_context=json.dumps(formatted_context, ensure_ascii=False, indent=2), last_collected_info=json.dumps(last_collected_info, ensure_ascii=False, indent=2) # 여기도 마지막것만 넣기 last_collected_info[-1]["data"]
         )
 
         response = await self.llm.ainvoke(pp)
@@ -345,12 +372,24 @@ class Orchestrator:
                         "location": None,
                         "description": None
                     }
+                },
+                "recommendation": {
+                    "recommendation_step": None,
+                    "collected_info": {
+                        "travel_style": None,
+                        "activities": [],
+                        "budget": None,
+                        "accommodation": None,
+                        "transportation": None
+                    }
                 }
             }
-
-            # 현재 컨텍스트 가져오기
-            current_context = state.get("context", {})
             target_context = required_context.get(intent_analysis["primary_intent"], {})
+
+            cache_client.add_message(session_id, {
+                "type": "primary_intent",
+                "data": intent_analysis["primary_intent"]
+            })
 
             # 추출된 컨텍스트가 있는 경우 업데이트
             if intent_analysis.get("extracted_context"):
@@ -365,19 +404,30 @@ class Orchestrator:
                         if value is not None:  # None이 아닌 경우에만 업데이트
                             target_context[field] = value
 
+            if before_primary_intent and before_primary_intent == "planner":
+                intent_analysis["primary_intent"] == "planner"
+
+            if intent_analysis["primary_intent"] == "recommendation":
+                state["current_agent"] = "recommendation"
+                state["context"] = update_dict(current_context, target_context)
+                cache_client.add_message(session_id, {"type": "context", "data": state["context"]})
+                state["next_steps"] = []
+                return state
+
             # 누락된 정보가 있는 경우
             if intent_analysis.get("missing_info") and intent_analysis["missing_info"].get("fields"):
                 examples = intent_analysis["missing_info"].get("examples", {})
 
                 # 이전 컨텍스트 유지하면서 업데이트
                 state["context"] = update_dict(current_context, target_context)
+                cache_client.add_message(session_id, {"type": "context", "data": state["context"]})
 
                 state["result"] = {
                     "status": "need_more_info",
                     "message": intent_analysis["missing_info"]["message"],
                     "missing_fields": missing_fields,
                     "examples": examples,
-                    "current_context": state["context"]  # 현재 컨텍스트 정보 추가
+                    "current_context": state["context"]
                 }
                 state["next_steps"] = ["analyze_intent"]
                 state["current_agent"] = None
@@ -426,11 +476,11 @@ class Orchestrator:
                 "context": state["context"]
             })
 
-            # 에이전트 실행 시 이전 결과도 함께 전달
+
             result = await agent.process({
                 "message": state["messages"][-1].content,
                 "context": state["context"],
-                "previous_result": state.get("result")  # 이전 결과 전달
+                "session_id": state["session_id"]
             })
 
             if agent_name == "search" and result.get("status") == "success":
@@ -489,21 +539,21 @@ class Orchestrator:
             {executed_agents}
             
             사용 가능한 에이전트:
-            - search: 장소 검색, 관광지 정보 요청, 호텔 검색 등
             - planner: 여행 계획 수립, 일정 조정, 예산 계획 등
-            - calendar: 일정 등록, 일정 확인, 일정 수정 등
-            - mail: 여행 계획 메일 전송
+            - recommendation: 여행지 추천, 여행 스타일 추천, 맞춤형 여행 계획 추천 등
             
             응답 형식:
-            {
+            {{
                 "is_complete": true/false,
                 "next_steps": ["planner"]  # 다음에 실행할 에이전트 목록
-            }
+            }}
             
             주의사항:
             1. 이미 실행된 에이전트는 다시 실행하지 마세요.
             2. 각 에이전트는 한 번만 실행되어야 합니다.
-            3. 모든 필요한 에이전트가 실행되었다면 is_complete를 true로 설정하세요."""),
+            3. 모든 필요한 에이전트가 실행되었다면 is_complete를 true로 설정하세요.
+            4. recommendation 에이전트는 한 번만 실행되어야 하며, 이미 실행되었다면 다시 실행하지 마세요.
+            5. recommendation 에이전트가 현재 실행 중이라면 next_steps에 포함시키지 마세요."""),
             HumanMessage(content="다음 단계를 결정해주세요.")
         ])
 
@@ -576,7 +626,7 @@ class Orchestrator:
             "messages": [*previous_messages, HumanMessage(content=input_data["message"])],
             "current_agent": None,
             "context": input_data.get("context", {}),
-            "result": {"previous_result": input_data.get("previous_result"), "plan":input_data.get("plan")},  # 이전 결과 유지
+            "session_id": input_data["session_id"],
             "workflow_history": input_data.get("workflow_history", []),  # 이전 워크플로우 히스토리 유지
             "next_steps": []
         }
