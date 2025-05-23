@@ -160,6 +160,15 @@ const sendMessage = async () => {
               if (!isDuplicateMessage(formattedRecommendations)) {
                 messages.value.push({ type: 'bot', content: formattedRecommendations })
               }
+            } else if (parsed.operation === 'register_itinerary') {
+              // 메시지 표시
+              if (parsed.message) {
+                messages.value.push({ type: 'bot', content: parsed.message })
+              }
+              // 3초 후 페이지 새로고침
+              setTimeout(() => {
+                window.location.reload()
+              }, 3000)
             } else {
               const successMessage = parsed.message
               if (!isDuplicateMessage(successMessage)) {

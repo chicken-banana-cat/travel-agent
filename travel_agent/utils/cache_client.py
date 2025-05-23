@@ -1,11 +1,9 @@
 import boto3
-import json
 from datetime import datetime
-from decimal import Decimal
 
 def convert_floats_to_decimal(obj):
     if isinstance(obj, float):
-        return Decimal(str(obj))  # float을 문자열로 바꾼 뒤 Decimal로
+        return int(obj)
     elif isinstance(obj, dict):
         return {k: convert_floats_to_decimal(v) for k, v in obj.items()}
     elif isinstance(obj, list):

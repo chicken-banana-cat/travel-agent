@@ -176,40 +176,50 @@ class Orchestrator:
         session_data = cache_client.get_conversation_history(session_id)
 
         # 이메일 입력 처리
-        email = messages[-1].content.strip()
-        if "@" in email and "." in email and session_data.get("plan"):
+        msg = messages[-1].content.strip()
+        if "@" in msg and "." in msg and session_data.get("plan"):
             plan = session_data["plan"][-1]["data"]
             context = session_data["context"][-1]["data"]
             # 이메일을 컨텍스트에 추가
             process_search_and_mail.delay(
-                email=email,
+                email=msg,
                 context=context,
                 plan=plan
             )
 
-            # 워크플로우 종료
+            # 캘린더 등록 여부 확인
             state["result"] = {
-                "status": "success",
-                "message": "이메일이 등록되었습니다. 검색 결과는 이메일로 전송됩니다.",
-                "current_context": state["context"]
+                "status": "need_more_info",
+                "message": "이메일이 등록되었습니다. 검색 결과는 이메일로 전송됩니다. 캘린더에 여행 일정을 등록하시겠습니까? (예/아니오)",
+                "current_context": state["context"],
+                "missing_fields": ["calendar_confirm"],
+                "examples": {
+                    "calendar_confirm": "예"
+                }
             }
-            state["next_steps"] = []
+            state["next_steps"] = ["analyze_intent"]
+            cache_client.add_message(session_id, {
+                "type": "email",
+                "data": email
+            })
             return state
         # 현재 컨텍스트 가져오기
 
-        before_primary_intent = session_data.get("primary_intent", [])
         before_contexts = session_data.get("context", [])
         if before_contexts:
             current_context = before_contexts[-1].get("data", {})
         else:
             current_context = {}
 
+        # 캘린더 등록 확인 응답 처리
+        if emails := session_data.get("email") and session_data.get("plan"):
+            state["current_agent"] = "calendar"
+            state["context"] = msg
+            return state
+
         last_collected_info = session_data.get("collected_info", [])
         if last_collected_info:
             last_collected_info = last_collected_info[-1]["data"]
-        before_primary_intent = session_data.get("primary_intent", [])
-        if before_primary_intent:
-            before_primary_intent = before_primary_intent[-1]["data"]
         # LLM을 사용하여 의도 분석
         prompt = ChatPromptTemplate.from_messages([
             SystemMessagePromptTemplate.from_template("""당신은 여행 계획 조율자입니다.
@@ -223,7 +233,7 @@ class Orchestrator:
             각 에이전트별 컨텍스트 (필수):
             - planner: {{
                 "departure_location": "출발지 (필수)",
-                "departure_date": "출발 날짜 (필수)",
+                "departure_date": "출발 날짜 (필수) (yyyy-mm-dd) (올해는 2025년)",
                 "destination": "여행지 (필수)",
                 "duration": "여행 기간 (필수)",
                 "preferences": {{
@@ -403,9 +413,6 @@ class Orchestrator:
                     else:
                         if value is not None:  # None이 아닌 경우에만 업데이트
                             target_context[field] = value
-
-            if before_primary_intent and before_primary_intent == "planner":
-                intent_analysis["primary_intent"] == "planner"
 
             if intent_analysis["primary_intent"] == "recommendation":
                 state["current_agent"] = "recommendation"
@@ -654,13 +661,6 @@ class Orchestrator:
                         "status": "need_more_info",
                         "result": current_state["result"],
                         "messages": current_state["messages"]
-                    }
-                elif agent := current_state.get("current_agent"):
-                    yield {
-                        "status": "processing",
-                        "result": current_state["result"],
-                        "messages": current_state["messages"],
-                        "output_message": f"입력된 정보 ({current_state['context'].get('destination', '')}, {current_state['context'].get('duration', '')})를 바탕으로 {agent}작업을 시작합니다.",
                     }
                 continue
 

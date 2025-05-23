@@ -1,3 +1,4 @@
+from datetime import date
 from typing import Any, Dict, List, Optional
 import json
 from pydantic import BaseModel, Field, ValidationError
@@ -44,6 +45,8 @@ class TravelPlan(BaseModel):
     budget: Budget
     recommendations: List[Recommendation]
     tips: List[str]
+    departure_date: str
+    departure_location: str
 
 
 class PlannerResponse(BaseModel):
@@ -158,7 +161,9 @@ class PlannerAgent(BaseAgent):
                             "items": ["추천 항목"]
                         }
                     ],
-                    "tips": ["여행 팁"]
+                    "tips": ["여행 팁"],
+                    "departure_date": 출발 날짜 (yyyy-mm-dd),
+                    "departure_location": 출발지
                 }"""),
                 HumanMessage(content=f"""여행 계획을 수립해주세요:
                 출발지: {context['departure_location']}
@@ -251,7 +256,9 @@ class PlannerAgent(BaseAgent):
                 itinerary=optimized_plan.itinerary,
                 budget=budget_plan,
                 recommendations=optimized_plan.recommendations,
-                tips=optimized_plan.tips
+                tips=optimized_plan.tips,
+                departure_date=context['departure_date'],
+                departure_location=context['departure_location'],
             )
             
             return PlannerResponse(
