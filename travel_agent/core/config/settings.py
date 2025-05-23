@@ -42,7 +42,12 @@ class Settings(BaseSettings):
     SMTP_USERNAME: str
     SMTP_PASSWORD: str
     SENDER_EMAIL: str
-
+    CELERY_BROKER_URL: str
+    CELERY_RESULT_BACKEND: str
+    AWS_ACCESS_KEY_ID: str
+    AWS_SECRET_ACCESS_KEY: str
+    AWS_REGION: str
+    AWS_SQS_URL: str
     # 기본 모델 설정
     MODEL_NAME: str
 

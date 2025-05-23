@@ -43,8 +43,8 @@ class MailAgent(BaseAgent):
             }
         
         try:
-            plan = input_data['previous_result']['plan']
-            search_result = input_data['previous_result']['previous_result']
+            plan = input_data['plan']
+            search_result = input_data['search_result']
             search_result["places"] = search_result['context']['preferences']['places']
 
             destination = input_data["context"]["destination"]
@@ -75,7 +75,7 @@ class MailAgent(BaseAgent):
             msg = MIMEMultipart()
             msg["Subject"] = f"[여행 계획] {destination} 여행 계획"
             msg["From"] = self.sender_email
-            msg["To"] = input_data["message"]
+            msg["To"] = input_data["email"]
             
             # HTML 내용 추가
             msg.attach(MIMEText(email_content, "html"))

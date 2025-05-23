@@ -11,6 +11,7 @@ from .planner_agent import PlannerAgent
 from .calendar_agent import CalendarAgent
 from .mail_agent import MailAgent
 from ..config.settings import settings
+from ...tasks import process_search_and_mail
 
 
 def update_dict(d1: Dict, d2: Dict) -> Dict:
@@ -75,7 +76,7 @@ class Orchestrator:
             return state["current_agent"]
 
         # 기본값으로 search 에이전트로 라우팅
-        return "search"
+        return "determine_next_steps"
 
     def _get_next_step_node(self, state: AgentState) -> str:
         """다음 단계의 노드를 결정하는 함수
@@ -176,36 +177,26 @@ class Orchestrator:
 
         # 현재 컨텍스트 가져오기
         current_context = state.get("context", {})
-
         # 이메일 입력 처리
         email = messages[-1].content.strip()
-        if "@" in email and "." in email:
-            # 이전 결과가 성공이고 여행 계획이 완성된 상태인 경우
+        if "@" in email and "." in email and state.get('result') is not None and state['result'].get('plan') is not None:
+            plan = state['result']['plan']
+            context = state['context']
+            # 이메일을 컨텍스트에 추가
+            process_search_and_mail.delay(
+                email=email,
+                context=context,
+                plan=plan
+            )
 
-            if (
-                state.get("result") is not None and state["result"].get("previous_result") is not None and
-                state["result"]["previous_result"].get("status") == "success" and
-                state["result"]["previous_result"].get("is_complete_search", False)
-            ):
-                # 이메일을 컨텍스트에 추가
-                state["context"]["email"] = email
-                # mail agent로 라우팅
-                state["current_agent"] = "mail"
-                state["next_steps"] = ["mail"]
-                return state
-            else:
-                # 잘못된 이메일 형식이나 적절하지 않은 시점의 이메일 입력
-                state["result"] = {
-                    "status": "need_more_info",
-                    "message": "여행 계획이 완성된 후에 이메일을 입력해주세요.",
-                    "missing_fields": ["email"],
-                    "examples": {
-                        "email": "user@example.com"
-                    },
-                    "current_context": state["context"]
-                }
-                state["next_steps"] = []
-                return state
+            # 워크플로우 종료
+            state["result"] = {
+                "status": "success",
+                "message": "이메일이 등록되었습니다. 검색 결과는 이메일로 전송됩니다.",
+                "current_context": state["context"]
+            }
+            state["next_steps"] = []
+            return state
 
         # LLM을 사용하여 의도 분석
         prompt = ChatPromptTemplate.from_messages([
@@ -469,54 +460,18 @@ class Orchestrator:
             if "agent" in step
         ]
 
-        # planner와 search가 모두 실행되었는지 확인
-        has_planner = "planner" in executed_agents
-        has_search = "search" in executed_agents
-
-        # 두 에이전트가 모두 실행되었고, mail이 아직 실행되지 않은 경우
-        if has_planner and has_search and "mail" not in executed_agents:
-            # 메일 전송 여부 확인을 위한 프롬프트
-            mail_prompt = ChatPromptTemplate.from_messages([
-                SystemMessage(content="""당신은 여행 계획 조율자입니다.
-                현재까지의 작업 결과를 바탕으로 사용자에게 메일 전송 여부를 물어보세요.
-                
-                워크플로우 히스토리:
-                {history}
-                
-                현재 결과:
-                {result}
-                
-                응답 형식:
-                {
-                    "should_ask_email": true/false,
-                    "message": "사용자에게 보낼 메시지"
-                }"""),
-                HumanMessage(content="메일 전송 여부를 물어볼까요?")
-            ])
-
-            # 메일 전송 여부 결정
-            response = await self.llm.ainvoke(mail_prompt.format_messages(
-                history=str(state["workflow_history"]),
-                result=str(state["result"])
-            ))
-            mail_decision = json.loads(response.content)
-
-            if mail_decision["should_ask_email"]:
-                state["result"] = {
-                    "status": "need_more_info",
-                    "message": mail_decision["message"],
-                    "missing_fields": ["email"],
-                    "examples": {
-                        "email": "user@example.com"
-                    },
-                    "current_context": state["context"]
-                }
-                state["next_steps"] = []  # 워크플로우 종료
-                return state
-
-        # mail 에이전트가 실행된 경우 워크플로우 종료
-        if "mail" in executed_agents:
-            state["next_steps"] = []
+        if "planner" in executed_agents:
+            # 이메일 요청
+            state["result"] = {
+                "status": "need_more_info",
+                "message": "여행 계획이 완성되었습니다. 이메일을 입력해주시면 상세한 장소 정보를 검색하고 메일로 보내드리겠습니다.",
+                "missing_fields": ["email"],
+                "examples": {
+                    "email": "user@example.com"
+                },
+                "current_context": state["context"]
+            }
+            state["next_steps"] = []  # 워크플로우 일시 중단
             return state
 
         # LLM을 사용하여 다음 단계 결정
@@ -542,7 +497,7 @@ class Orchestrator:
             응답 형식:
             {
                 "is_complete": true/false,
-                "next_steps": ["search", "planner", "calendar", "mail"]  # 다음에 실행할 에이전트 목록
+                "next_steps": ["planner"]  # 다음에 실행할 에이전트 목록
             }
             
             주의사항:

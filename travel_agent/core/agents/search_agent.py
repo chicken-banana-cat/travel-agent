@@ -41,7 +41,7 @@ class SearchAgent(BaseAgent):
     async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """검색 처리"""
         context = input_data.get("context", {})
-        input_data = input_data["previous_result"]
+        plan = input_data.get("plan", {})
         if not await self.validate(input_data):
             return {
                 "status": "error",
@@ -50,10 +50,6 @@ class SearchAgent(BaseAgent):
             }
         
         try:
-            # planner의 결과에서 장소 정보 추출
-            plan = input_data.get("plan", {})
-
-            # 일정에서 장소 추출
             locations = []
             for day in plan.get("itinerary", []):
                 for activity in day.get("activities", []):
