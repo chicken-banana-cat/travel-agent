@@ -177,8 +177,6 @@ class Orchestrator:
         if "@" in msg and "." in msg and session_data.get("plan"):
             plan = session_data["plan"][-1]["data"]
             context = session_data["context"][-1]["data"]
-            # 이메일을 컨텍스트에 추가
-            process_search_and_mail.delay(email=msg, context=context, plan=plan)
             process_search_and_mail.apply_async(
                 args=[context, msg, plan],
                 queue="travel-agent-queue",
@@ -195,7 +193,6 @@ class Orchestrator:
             state["next_steps"] = ["analyze_intent"]
             cache_client.add_message(session_id, {"type": "email", "data": msg})
             return state
-        # 현재 컨텍스트 가져오기
 
         before_contexts = session_data.get("context", [])
         if before_contexts:
@@ -212,7 +209,7 @@ class Orchestrator:
         last_collected_info = session_data.get("collected_info", [])
         if last_collected_info:
             last_collected_info = last_collected_info[-1]["data"]
-        # LLM을 사용하여 의도 분석
+
         prompt = ChatPromptTemplate.from_messages(
             [
                 SystemMessagePromptTemplate.from_template(
@@ -295,55 +292,16 @@ class Orchestrator:
             ]
         )
 
-        # 컨텍스트를 구조화된 JSON으로 전달
-        formatted_context = {
-            "departure_location": current_context.get("departure_location"),
-            "departure_date": current_context.get("departure_date"),
-            "destination": current_context.get("destination"),
-            "duration": current_context.get("duration"),
-            "preferences": {
-                "budget": current_context.get("preferences", {}).get("budget"),
-                "activities": current_context.get("preferences", {}).get(
-                    "activities", []
-                ),
-                "accommodation": current_context.get("preferences", {}).get(
-                    "accommodation"
-                ),
-                "transportation": current_context.get("preferences", {}).get(
-                    "transportation"
-                ),
-            },
-            "recommendation": {
-                "recommendation_step": current_context.get("recommendation_step"),
-                "collected_info": {
-                    "travel_style": current_context.get("collected_info", {}).get(
-                        "travel_style"
-                    ),
-                    "activities": current_context.get("collected_info", {}).get(
-                        "activities", []
-                    ),
-                    "budget": current_context.get("collected_info", {}).get("budget"),
-                    "accommodation": current_context.get("collected_info", {}).get(
-                        "accommodation"
-                    ),
-                    "transportation": current_context.get("collected_info", {}).get(
-                        "transportation"
-                    ),
-                },
-            },
-        }
-
         pp = prompt.format_messages(
-            current_context=json.dumps(formatted_context, ensure_ascii=False, indent=2),
+            current_context=json.dumps(current_context, ensure_ascii=False, indent=2),
             last_collected_info=json.dumps(
                 last_collected_info, ensure_ascii=False, indent=2
-            ),  # 여기도 마지막것만 넣기 last_collected_info[-1]["data"]
+            ),
         )
 
         response = await self.llm.ainvoke(pp)
 
         try:
-            # JSON 파싱 시도
             intent_analysis = json.loads(response.content)
 
             # 현재 컨텍스트에 있는 필드가 missing_info에 포함되어 있는지 확인
@@ -352,7 +310,6 @@ class Orchestrator:
                 extracted_context = intent_analysis.get("extracted_context", {})
 
                 def is_field_in_context(field: str, context: dict) -> bool:
-                    """중첩된 필드가 컨텍스트에 있는지 확인"""
                     if "." in field:
                         parent, child = field.split(".")
                         return (
@@ -372,7 +329,6 @@ class Orchestrator:
                     )
                 ]
 
-                # missing_info가 비어있으면 제거
                 if not intent_analysis["missing_info"]["fields"]:
                     intent_analysis.pop("missing_info", None)
 

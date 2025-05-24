@@ -49,7 +49,7 @@ DISTRIBUTION_ID='E1534QXOKU44H0'
 
 # Get CloudFront domain
 CLOUDFRONT_DOMAIN=$(aws cloudfront get-distribution --id $DISTRIBUTION_ID --query 'Distribution.DomainName' --output text)
-
+aws cloudfront create-invalidation --distribution-id $DISTRIBUTION_ID --paths "/*"
 echo "Deployment complete!"
 echo "Your app is available at: https://$CLOUDFRONT_DOMAIN"
 echo "S3 Bucket: $BUCKET_NAME"
