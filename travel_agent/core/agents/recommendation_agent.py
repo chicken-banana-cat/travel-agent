@@ -129,7 +129,20 @@ class RecommendationAgent:
         response = await self.llm.ainvoke(formatted_prompt)
         
         try:
-            result = json.loads(response.content)
+            # 응답이 JSON 형식인지 확인
+            content = response.content.strip()
+            print(f"LLM Response: {content}")  # 디버깅을 위한 로그 추가
+            
+            if not content.startswith('{') or not content.endswith('}'):
+                print(f"Invalid JSON format. Content: {content}")  # 디버깅을 위한 로그 추가
+                return {
+                    "status": "error",
+                    "message": "LLM 응답이 JSON 형식이 아닙니다",
+                    "raw_response": content,
+                    "current_step": current_step
+                }
+            
+            result = json.loads(content)
             
             # 다음 단계 결정
             if current_step == "preferences":

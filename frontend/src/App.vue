@@ -105,7 +105,7 @@ const sendMessage = async () => {
   try {
     // EventSource를 사용하여 SSE 연결 (세션 ID 포함)
     const eventSource = new EventSource(
-      `http://localhost:8000/api/v1/chat?message=${encodeURIComponent(userMessage)}&session_id=${sessionId.value}`
+      `https://uqdkqqn8kg.ap-northeast-1.awsapprunner.com/travel-agent?message=${encodeURIComponent(userMessage)}&session_id=${sessionId.value}`
     )
 
     eventSource.onmessage = (event) => {

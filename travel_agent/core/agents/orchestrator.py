@@ -200,7 +200,7 @@ class Orchestrator:
             state["next_steps"] = ["analyze_intent"]
             cache_client.add_message(session_id, {
                 "type": "email",
-                "data": email
+                "data": msg
             })
             return state
         # 현재 컨텍스트 가져오기

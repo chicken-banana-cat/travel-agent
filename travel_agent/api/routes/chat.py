@@ -122,7 +122,7 @@ async def clear_chat(user_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/chat")
+@router.get("/travel-agent")
 async def chat(message: str, session_id: str = None) -> StreamingResponse:
     """채팅 엔드포인트 (SSE)"""
     try:

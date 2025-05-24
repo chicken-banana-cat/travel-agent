@@ -20,7 +20,7 @@ class CacheClient:
         return cls._instance
 
     def _initialize(self):
-        self.dynamodb = boto3.resource('dynamodb')
+        self.dynamodb = boto3.resource('dynamodb', region_name='ap-northeast-2')
         self.table = self.dynamodb.Table('travel-agent-cache')
 
     def get_conversation_history(self, user_id: str) -> dict:

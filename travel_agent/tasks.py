@@ -21,12 +21,12 @@ celery_app = Celery('travel_agent')
 
 # Celery 설정
 celery_app.conf.update(
-    broker_url=settings.CELERY_BROKER_URL,
+    broker_url=settings.AWS_SQS_URL,
     result_backend=settings.CELERY_RESULT_BACKEND,
     broker_transport_options={
         'region': settings.AWS_REGION,
         'visibility_timeout': 3600,
-        'polling_interval': 1,
+        'polling_interval': 1
     },
     task_serializer='json',
     accept_content=['json'],
