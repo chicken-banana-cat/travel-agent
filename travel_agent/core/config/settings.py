@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     AWS_SQS_URL: str
     # 기본 모델 설정
     MODEL_NAME: str
+    AWS_ACCOUNT_ID: str
 
     # 모델 설정
     models: Dict[str, ModelConfig] = Field(

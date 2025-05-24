@@ -1,0 +1,25 @@
+FROM public.ecr.aws/lambda/python:3.12
+
+WORKDIR /app
+
+# Copy requirements file
+COPY pyproject.toml poetry.lock ./
+
+# Install poetry
+RUN pip install poetry
+
+# Configure poetry
+RUN poetry config virtualenvs.create false
+
+# Install dependencies
+RUN poetry install --without dev --no-root
+
+# Copy application code
+COPY . .
+
+# Set environment variables
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+# Set the Lambda handler
+CMD ["travel_agent.lambda_handler.lambda_handler"] 

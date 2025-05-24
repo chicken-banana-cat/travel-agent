@@ -1,6 +1,5 @@
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timedelta
-from decimal import Decimal
 
 from langchain.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage, SystemMessage

@@ -21,12 +21,12 @@ celery_app = Celery('travel_agent')
 
 # Celery 설정
 celery_app.conf.update(
-    broker_url=settings.AWS_SQS_URL,
-    result_backend=settings.CELERY_RESULT_BACKEND,
+    broker_url=f"sqs://sqs.{settings.AWS_REGION}.amazonaws.com/{settings.AWS_ACCOUNT_ID}/travel-agent-queue",
+    result_backend=None,
     broker_transport_options={
         'region': settings.AWS_REGION,
         'visibility_timeout': 3600,
-        'polling_interval': 1
+        'polling_interval': 1,
     },
     task_serializer='json',
     accept_content=['json'],
@@ -59,15 +59,15 @@ def process_search_and_mail(context: dict, email: str, plan: dict):
         search_result = loop.run_until_complete(
             search_agent.process({"plan": plan, "context": context})
         )
-        
+
         # Send email
         loop.run_until_complete(
             mail_agent.process(
                 {"email": email, "context": context, "plan": plan, "search_result": search_result}
             )
         )
-        
+
         return
     except Exception as e:
-        logger.error(msg="fail process_search_and_mail", stack_info=e)
-        return
+        logger.error(f"Task failed with error: {str(e)}", exc_info=True)
+        raise  # Re-raise the exception to ensure Celery knows the task failed

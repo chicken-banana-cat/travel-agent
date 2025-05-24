@@ -1,13 +1,16 @@
 import boto3
 from datetime import datetime
+from decimal import Decimal
 
-def convert_floats_to_decimal(obj):
+def convert_floats_to_int(obj):
     if isinstance(obj, float):
         return int(obj)
+    elif isinstance(obj, Decimal):
+        return int(obj)
     elif isinstance(obj, dict):
-        return {k: convert_floats_to_decimal(v) for k, v in obj.items()}
+        return {k: convert_floats_to_int(v) for k, v in obj.items()}
     elif isinstance(obj, list):
-        return [convert_floats_to_decimal(i) for i in obj]
+        return [convert_floats_to_int(i) for i in obj]
     else:
         return obj
 class CacheClient:
@@ -50,7 +53,7 @@ class CacheClient:
                 **message,
                 'timestamp': datetime.now().isoformat()
             })
-            current_messages = convert_floats_to_decimal(current_messages)
+            current_messages = convert_floats_to_int(current_messages)
             
             # DynamoDB에 저장
             self.table.put_item(

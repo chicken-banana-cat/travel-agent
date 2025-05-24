@@ -1,7 +1,7 @@
 SERVICE_NAME="travel-agent-api"
 AWS_REGION="ap-northeast-1"
 ECR_REPO_NAME="travel-agent"
-IMAGE_TAG=$(date +%Y%m%d-%H%M%S)
+IMAGE_TAG="latest"
 
 # Get AWS account ID
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)

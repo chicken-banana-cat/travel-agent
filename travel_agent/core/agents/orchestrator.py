@@ -186,6 +186,10 @@ class Orchestrator:
                 context=context,
                 plan=plan
             )
+            process_search_and_mail.apply_async(
+                args=[context, msg, plan],
+                queue='travel-agent-queue',
+            )
 
             # 캘린더 등록 여부 확인
             state["result"] = {

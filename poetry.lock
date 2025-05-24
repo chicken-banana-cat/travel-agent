@@ -1273,7 +1273,9 @@ files = [
 
 [package.dependencies]
 amqp = ">=5.1.1,<6.0.0"
+boto3 = {version = ">=1.26.143", optional = true, markers = "extra == \"sqs\""}
 tzdata = {version = ">=2025.2", markers = "python_version >= \"3.9\""}
+urllib3 = {version = ">=1.26.16", optional = true, markers = "extra == \"sqs\""}
 vine = "5.1.0"
 
 [package.extras]
@@ -3676,4 +3678,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "36e78e5db0359c8fda9aa3190e86980b53dc83f45649e10fdea3a1687c6ada38"
+content-hash = "fa51bd0abbeb1aaf6d713a77c490957f712d845ce99ce9154b428950f2e7c37c"
