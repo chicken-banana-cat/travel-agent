@@ -276,6 +276,7 @@ class Orchestrator:
                - primary_intent를 "planner"로 설정하세요.
                - 이전 recommendation 단계에서 수집된 정보(preferences, activities 등)를 planner의 extracted_context에 포함시키세요.
                - recommendation 단계에서 수집된 정보가 있다면, 해당 정보를 planner의 preferences에 매핑하세요.
+            9. destination 정보는 대한민국 내로 한정합니다. 해외의 경우 국내 여행지로만 요청하세요.
             
             메시지에서 직접 추출할 수 있는 정보는 extracted_context에 포함시켜주세요.
             현재 컨텍스트의 정보와 새로운 정보를 합쳐서 최종 컨텍스트를 구성하세요.

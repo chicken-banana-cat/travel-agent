@@ -17,7 +17,7 @@ class RecommendationAgent:
             model=settings.MODEL_NAME,
             temperature=0.7
         )
-        
+
         # 추천 단계 정의
         self.recommendation_steps = {
             "preferences": {
@@ -66,6 +66,8 @@ class RecommendationAgent:
                 3. 예산 범위 내에서 가능한 곳
                 4. 선호하는 숙박 시설이 있는 곳
                 5. 교통수단 선호도에 맞는 곳
+                6. 당일치기인 경우 숙박 시설이 필요 없습니다.
+                7. 대한민국 내의 여행지만 추천하세요.
                 
                 응답은 다음 JSON 형식으로만 제공하세요:
                 {{
@@ -93,7 +95,7 @@ class RecommendationAgent:
         session_id = input_data["session_id"]
         session_data = cache_client.get_conversation_history(session_id)
         previous_collected_info = session_data.get("collected_info", [])
-        if previous_collected_info and  isinstance(previous_collected_info, Iterable):
+        if previous_collected_info and isinstance(previous_collected_info, Iterable):
             before_collected_info = previous_collected_info[-1]["data"] or {}
         else:
             before_collected_info = {}
@@ -105,7 +107,6 @@ class RecommendationAgent:
         step_config = self.recommendation_steps[current_step]
         context = json.dumps(before_collected_info, ensure_ascii=False, indent=2)
 
-
         before_contexts = session_data.get("context", [])
         if before_contexts:
             additional_context = before_contexts[-1].get("data", {})
@@ -113,7 +114,8 @@ class RecommendationAgent:
             additional_context = {}
         # 컨텍스트에 따라 프롬프트 포맷팅
         if current_step == "preferences":
-            prompt_content = step_config["prompt"].format(current_context=context, additional_context=additional_context)
+            prompt_content = step_config["prompt"].format(current_context=context,
+                                                          additional_context=additional_context)
             formatted_prompt = [
                 SystemMessage(content=prompt_content),
                 HumanMessage(content=message)
@@ -126,48 +128,42 @@ class RecommendationAgent:
             ]
 
         # LLM 호출
-        response = await self.llm.ainvoke(formatted_prompt)
-        
-        try:
-            # 응답이 JSON 형식인지 확인
-            content = response.content.strip()
-            print(f"LLM Response: {content}")  # 디버깅을 위한 로그 추가
-            
-            if not content.startswith('{') or not content.endswith('}'):
-                print(f"Invalid JSON format. Content: {content}")  # 디버깅을 위한 로그 추가
-                return {
-                    "status": "error",
-                    "message": "LLM 응답이 JSON 형식이 아닙니다",
-                    "raw_response": content,
-                    "current_step": current_step
-                }
-            
-            result = json.loads(content)
-            
-            # 다음 단계 결정
-            if current_step == "preferences":
-                # 모든 필수 정보가 수집되었는지 확인
-                collected_info = update_dict(before_collected_info, result.get("collected_info", {}))
-                missing_fields = [
-                    field for field in step_config["required_fields"]
-                    if not collected_info.get(field)
-                ]
-                if not missing_fields:
-                    collected_info["next_step"] = "destination"
-                else:
-                    collected_info["next_step"] = "preferences"
-                cache_client.add_message(session_id, {
-                    "type": "collected_info",
-                    "data": collected_info
-                })
+        max_retries = 3
+        retry_count = 0
+        result = {}
 
-            
-            return result
-            
-        except Exception as e:
-            raise e
-            return {
-                "status": "error",
-                "message": f"추천 처리 중 오류가 발생했습니다: {str(e)}",
-                "current_step": current_step
-            } 
+        while retry_count < max_retries:
+            try:
+                response = await self.llm.ainvoke(formatted_prompt)
+                content = response.content.strip()
+                result = json.loads(content)
+                break
+            except Exception as e:
+                last_error = e
+                retry_count += 1
+                if retry_count == max_retries:
+                    return {
+                        "status": "error",
+                        "message": f"LLM 추천 중 오류가 발생했습니다.: {str(last_error)}",
+                        "current_step": current_step
+                    }
+                continue
+
+            # 다음 단계 결정
+        if current_step == "preferences":
+            # 모든 필수 정보가 수집되었는지 확인
+            collected_info = update_dict(before_collected_info, result.get("collected_info", {}))
+            missing_fields = [
+                field for field in step_config["required_fields"]
+                if not collected_info.get(field)
+            ]
+            if not missing_fields:
+                collected_info["next_step"] = "destination"
+            else:
+                collected_info["next_step"] = "preferences"
+            cache_client.add_message(session_id, {
+                "type": "collected_info",
+                "data": collected_info
+            })
+
+        return result

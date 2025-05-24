@@ -7,6 +7,8 @@ const userInput = ref('')
 const isLoading = ref(false)
 const messagesContainer = ref(null)
 const sessionId = ref('')  // 세션 ID 저장
+const lastPlan = ref('')  // 마지막 여행 계획 저장
+const lastRecommendations = ref('')  // 마지막 추천 여행지 저장
 
 // UUID 생성 함수
 const generateUUID = () => {
@@ -120,8 +122,18 @@ const sendMessage = async () => {
         }
 
         // 중복 메시지 체크를 위한 함수
-        const isDuplicateMessage = (content) => {
+        const isDuplicateMessage = (content, type) => {
           if (messages.value.length === 0) return false
+          
+          // plan이나 recommendations 타입인 경우에만 타입별 체크
+          if (type === 'plan') {
+            return content === lastPlan.value
+          }
+          if (type === 'recommendations') {
+            return content === lastRecommendations.value
+          }
+          
+          // 일반 메시지의 경우 내용 비교
           const lastMessage = messages.value[messages.value.length - 1]
           return lastMessage.type === 'bot' && lastMessage.content === content
         }
@@ -148,8 +160,9 @@ const sendMessage = async () => {
             if (parsed.plan) {
               // 여행 계획이 있는 경우 포맷팅하여 표시
               const formattedPlan = formatTravelPlan(parsed.plan)
-              if (!isDuplicateMessage(formattedPlan)) {
+              if (!isDuplicateMessage(formattedPlan, 'plan')) {
                 messages.value.push({ type: 'bot', content: formattedPlan })
+                lastPlan.value = formattedPlan
               }
             } else if (parsed.recommendations) {
               // 추천 여행지가 있는 경우 포맷팅하여 표시
@@ -157,8 +170,9 @@ const sendMessage = async () => {
                 messages.value.push({ type: 'bot', content: parsed.message })
               }
               const formattedRecommendations = formatRecommendations(parsed.recommendations)
-              if (!isDuplicateMessage(formattedRecommendations)) {
+              if (!isDuplicateMessage(formattedRecommendations, 'recommendations')) {
                 messages.value.push({ type: 'bot', content: formattedRecommendations })
+                lastRecommendations.value = formattedRecommendations
               }
             } else if (parsed.operation === 'register_itinerary') {
               // 메시지 표시
@@ -250,7 +264,7 @@ onMounted(() => {
   
   messages.value.push({ 
     type: 'bot', 
-    content: '안녕하세요! 여행 상담사입니다. 어떤 여행을 계획하고 계신가요?' 
+    content: '안녕하세요! 여행 상담사입니다. 어떤 여행을 계획하고 계신가요? 국내 여행을 추천 / 계획해드리겠습니다.'
   })
 })
 </script>
@@ -258,7 +272,7 @@ onMounted(() => {
 <template>
   <div class="chat-container">
     <div class="chat-header">
-      <h1>여행 상담사</h1>
+      <h1>국내여행 상담사</h1>
     </div>
     <div class="chat-messages" ref="messagesContainer">
       <div v-for="(message, index) in messages" :key="index" 
