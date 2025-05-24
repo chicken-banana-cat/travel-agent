@@ -1,6 +1,3 @@
-
-
-
 def update_dict(d1: dict, d2: dict) -> dict:
     """d2의 값이 None, [], '' 등이 아닌 경우에만 d1을 업데이트"""
     result = d1.copy()

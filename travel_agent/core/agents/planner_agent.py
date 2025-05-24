@@ -1,10 +1,10 @@
+import json
 from datetime import date
 from typing import Any, Dict, List, Optional
-import json
-from pydantic import BaseModel, Field, ValidationError
 
 from langchain.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import BaseModel, Field, ValidationError
 
 from .base import BaseAgent
 
@@ -58,24 +58,33 @@ class PlannerResponse(BaseModel):
 
 class PlannerAgent(BaseAgent):
     """여행 계획 작성을 담당하는 에이전트"""
-    
+
     def __init__(self):
         super().__init__(
-            name="planner_agent",
-            description="여행 일정 계획 작성을 담당하는 에이전트"
+            name="planner_agent", description="여행 일정 계획 작성을 담당하는 에이전트"
         )
-        self.prompt = ChatPromptTemplate.from_messages([
-            SystemMessage(content="""당신은 여행 계획 전문가입니다.
+        self.prompt = ChatPromptTemplate.from_messages(
+            [
+                SystemMessage(
+                    content="""당신은 여행 계획 전문가입니다.
             사용자의 선호도와 제약사항을 고려하여 최적의 여행 계획을 수립합니다.
-            예산, 시간, 선호도 등을 종합적으로 고려하여 현실적인 계획을 제시하세요."""),
-            HumanMessage(content="{requirements}")
-        ])
-    
+            예산, 시간, 선호도 등을 종합적으로 고려하여 현실적인 계획을 제시하세요."""
+                ),
+                HumanMessage(content="{requirements}"),
+            ]
+        )
+
     async def validate(self, input_data: Dict[str, Any]) -> bool:
         """계획 요구사항 유효성 검증"""
-        required_fields = ["departure_location", "departure_date", "destination", "duration", "preferences"]
+        required_fields = [
+            "departure_location",
+            "departure_date",
+            "destination",
+            "duration",
+            "preferences",
+        ]
         return all(field in input_data for field in required_fields)
-    
+
     async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
 
         context = input_data.get("context") or input_data
@@ -84,14 +93,16 @@ class PlannerAgent(BaseAgent):
             return PlannerResponse(
                 status="error",
                 error="Invalid planning requirements",
-                message="필수 요구사항(departure_location, departure_date, destination, duration, preferences)이 누락되었습니다."
+                message="필수 요구사항(departure_location, departure_date, destination, duration, preferences)이 누락되었습니다.",
             ).model_dump()
-        
+
         try:
 
             # 1. LLM을 통한 계획 수립
-            planning_prompt = ChatPromptTemplate.from_messages([
-                SystemMessage(content="""당신은 여행 계획 전문가입니다.
+            planning_prompt = ChatPromptTemplate.from_messages(
+                [
+                    SystemMessage(
+                        content="""당신은 여행 계획 전문가입니다.
                 주어진 요구사항을 바탕으로 상세한 여행 계획을 수립해주세요.
                 
                 계획은 다음 요소들을 포함해야 합니다:
@@ -164,15 +175,19 @@ class PlannerAgent(BaseAgent):
                     "tips": ["여행 팁"],
                     "departure_date": 출발 날짜 (yyyy-mm-dd),
                     "departure_location": 출발지
-                }"""),
-                HumanMessage(content=f"""여행 계획을 수립해주세요:
+                }"""
+                    ),
+                    HumanMessage(
+                        content=f"""여행 계획을 수립해주세요:
                 출발지: {context['departure_location']}
                 출발 날짜: {context['departure_date']}
                 목적지: {context['destination']}
                 기간: {context['duration']}
-                선호사항: {context['preferences']}""")
-            ])
-            
+                선호사항: {context['preferences']}"""
+                    ),
+                ]
+            )
+
             # LLM을 통한 계획 수립
             response = await self.llm.ainvoke(planning_prompt.format_messages())
             try:
@@ -182,12 +197,14 @@ class PlannerAgent(BaseAgent):
                 return PlannerResponse(
                     status="error",
                     error="Invalid plan format",
-                    message=f"계획 데이터 형식이 올바르지 않습니다: {str(e)}"
+                    message=f"계획 데이터 형식이 올바르지 않습니다: {str(e)}",
                 ).model_dump()
-            
+
             # 2. 일정 최적화
-            optimization_prompt = ChatPromptTemplate.from_messages([
-                SystemMessage(content="""당신은 여행 일정 최적화 전문가입니다.
+            optimization_prompt = ChatPromptTemplate.from_messages(
+                [
+                    SystemMessage(
+                        content="""당신은 여행 일정 최적화 전문가입니다.
                 주어진 여행 계획을 검토하고 최적화해주세요.
                 
                 다음 사항들을 고려하여 최적화해주세요:
@@ -198,12 +215,16 @@ class PlannerAgent(BaseAgent):
                 5. 날씨와 계절
                 
                 응답은 반드시 유효한 JSON 형식으로 제공해주세요.
-                기존 계획과 동일한 구조를 유지해주세요."""),
-                HumanMessage(content=f"최적화할 계획: {plan.model_dump_json()}")
-            ])
-            
+                기존 계획과 동일한 구조를 유지해주세요."""
+                    ),
+                    HumanMessage(content=f"최적화할 계획: {plan.model_dump_json()}"),
+                ]
+            )
+
             # LLM을 통한 일정 최적화
-            optimization_response = await self.llm.ainvoke(optimization_prompt.format_messages())
+            optimization_response = await self.llm.ainvoke(
+                optimization_prompt.format_messages()
+            )
             try:
                 optimized_data = json.loads(optimization_response.content)
                 optimized_plan = TravelPlan.model_validate(optimized_data)
@@ -211,12 +232,14 @@ class PlannerAgent(BaseAgent):
                 return PlannerResponse(
                     status="error",
                     error="Invalid optimized plan format",
-                    message=f"최적화된 계획 데이터 형식이 올바르지 않습니다: {str(e)}"
+                    message=f"최적화된 계획 데이터 형식이 올바르지 않습니다: {str(e)}",
                 ).model_dump()
-            
+
             # 3. 예산 계획 수립
-            budget_prompt = ChatPromptTemplate.from_messages([
-                SystemMessage(content="""당신은 여행 예산 계획 전문가입니다.
+            budget_prompt = ChatPromptTemplate.from_messages(
+                [
+                    SystemMessage(
+                        content="""당신은 여행 예산 계획 전문가입니다.
                 주어진 여행 계획을 바탕으로 상세한 예산 계획을 수립해주세요.
                 
                 다음 사항들을 고려하여 예산을 산출해주세요:
@@ -235,10 +258,14 @@ class PlannerAgent(BaseAgent):
                     "food": {"estimated": 150000, "details": []},
                     "activities": {"estimated": 50000, "details": []},
                     "total": 500000
-                }"""),
-                HumanMessage(content=f"예산 계획 수립할 계획: {optimized_plan.model_dump_json()}")
-            ])
-            
+                }"""
+                    ),
+                    HumanMessage(
+                        content=f"예산 계획 수립할 계획: {optimized_plan.model_dump_json()}"
+                    ),
+                ]
+            )
+
             # LLM을 통한 예산 계획 수립
             budget_response = await self.llm.ainvoke(budget_prompt.format_messages())
             try:
@@ -248,28 +275,28 @@ class PlannerAgent(BaseAgent):
                 return PlannerResponse(
                     status="error",
                     error="Invalid budget format",
-                    message=f"예산 데이터 형식이 올바르지 않습니다: {str(e)}"
+                    message=f"예산 데이터 형식이 올바르지 않습니다: {str(e)}",
                 ).model_dump()
-            
+
             # 최종 계획 조합
             final_plan = TravelPlan(
                 itinerary=optimized_plan.itinerary,
                 budget=budget_plan,
                 recommendations=optimized_plan.recommendations,
                 tips=optimized_plan.tips,
-                departure_date=context['departure_date'],
-                departure_location=context['departure_location'],
+                departure_date=context["departure_date"],
+                departure_location=context["departure_location"],
             )
-            
+
             return PlannerResponse(
                 status="success",
                 plan=final_plan,
-                message="여행 계획이 완료되었습니다. 다음 작업을 진행합니다."
+                message="여행 계획이 완료되었습니다. 다음 작업을 진행합니다.",
             ).model_dump()
-            
+
         except Exception as e:
             return PlannerResponse(
                 status="error",
                 error="Planning failed",
-                message=f"여행 계획 수립 중 오류가 발생했습니다: {str(e)}"
-            ).model_dump() 
+                message=f"여행 계획 수립 중 오류가 발생했습니다: {str(e)}",
+            ).model_dump()

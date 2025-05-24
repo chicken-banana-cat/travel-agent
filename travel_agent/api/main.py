@@ -3,11 +3,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .routes import chat
 
-
 app = FastAPI(
     title="Travel Agent API",
     description="여행 일정 계획 멀티 에이전트 API",
-    version="0.1.0"
+    version="0.1.0",
 )
 
 # CORS 설정
@@ -26,7 +25,4 @@ app.include_router(chat.router, tags=["chat"])
 @app.get("/")
 async def root():
     """API 상태 확인 엔드포인트"""
-    return {
-        "status": "ok",
-        "message": "Travel Agent API is running"
-    }
+    return {"status": "ok", "message": "Travel Agent API is running"}

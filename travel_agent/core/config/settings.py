@@ -1,9 +1,10 @@
-from typing import Dict, List, Optional
 import os
 from pathlib import Path
+from typing import Dict, List, Optional
+
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
-from dotenv import load_dotenv
 
 # Load environment variables from .env file
 PROJECT_ROOT = Path.cwd()
@@ -16,6 +17,7 @@ else:
 
 class ModelConfig(BaseModel):
     """개별 모델 설정"""
+
     name: str
     provider: str  # openai, anthropic, etc.
     temperature: float = 0.7
@@ -25,6 +27,7 @@ class ModelConfig(BaseModel):
 
 class AgentConfig(BaseModel):
     """에이전트별 모델 설정"""
+
     primary_model: str  # 기본 모델 이름
     fallback_models: List[str] = []  # 대체 모델 목록
     max_retries: int = 3
@@ -32,6 +35,7 @@ class AgentConfig(BaseModel):
 
 class Settings(BaseSettings):
     """전체 애플리케이션 설정"""
+
     # API 키 설정
     OPENAI_API_KEY: str
     anthropic_api_key: Optional[str] = None
@@ -56,15 +60,11 @@ class Settings(BaseSettings):
     models: Dict[str, ModelConfig] = Field(
         default_factory=lambda: {
             "gpt-4.1-mini-2025-04-14": ModelConfig(
-                name="gpt-4.1-mini-2025-04-14",
-                provider="openai",
-                temperature=0.7
+                name="gpt-4.1-mini-2025-04-14", provider="openai", temperature=0.7
             ),
             "claude-3-opus": ModelConfig(
-                name="claude-3-opus",
-                provider="anthropic",
-                temperature=0.7
-            )
+                name="claude-3-opus", provider="anthropic", temperature=0.7
+            ),
         }
     )
 
@@ -72,24 +72,19 @@ class Settings(BaseSettings):
     agent_configs: Dict[str, AgentConfig] = Field(
         default_factory=lambda: {
             "orchestrator": AgentConfig(
-                primary_model="gpt-4.1-mini-2025-04-14",
-                fallback_models=["gpt-4"]
+                primary_model="gpt-4.1-mini-2025-04-14", fallback_models=["gpt-4"]
             ),
             "search_agent": AgentConfig(
-                primary_model="gpt-4.1-mini-2025-04-14",
-                fallback_models=[]
+                primary_model="gpt-4.1-mini-2025-04-14", fallback_models=[]
             ),
             "planner_agent": AgentConfig(
-                primary_model="gpt-4.1-mini-2025-04-14",
-                fallback_models=["gpt-4"]
+                primary_model="gpt-4.1-mini-2025-04-14", fallback_models=["gpt-4"]
             ),
             "calendar_agent": AgentConfig(
-                primary_model="gpt-4.1-mini-2025-04-14",
-                fallback_models=[]
+                primary_model="gpt-4.1-mini-2025-04-14", fallback_models=[]
             ),
             "mail_agent": AgentConfig(
-                primary_model="gpt-4.1-mini-2025-04-14",
-                fallback_models=[]
+                primary_model="gpt-4.1-mini-2025-04-14", fallback_models=[]
             ),
         }
     )

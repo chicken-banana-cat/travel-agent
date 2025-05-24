@@ -1,6 +1,8 @@
-import boto3
 from datetime import datetime
 from decimal import Decimal
+
+import boto3
+
 
 def convert_floats_to_int(obj):
     if isinstance(obj, float):
@@ -13,6 +15,8 @@ def convert_floats_to_int(obj):
         return [convert_floats_to_int(i) for i in obj]
     else:
         return obj
+
+
 class CacheClient:
     _instance = None
 
@@ -23,15 +27,15 @@ class CacheClient:
         return cls._instance
 
     def _initialize(self):
-        self.dynamodb = boto3.resource('dynamodb', region_name='ap-northeast-2')
-        self.table = self.dynamodb.Table('travel-agent-cache')
+        self.dynamodb = boto3.resource("dynamodb", region_name="ap-northeast-2")
+        self.table = self.dynamodb.Table("travel-agent-cache")
 
     def get_conversation_history(self, user_id: str) -> dict:
         """사용자의 대화 기록을 가져옵니다."""
         try:
-            response = self.table.get_item(Key={'user_id': user_id})
-            if 'Item' in response:
-                return response['Item'].get('messages', {})
+            response = self.table.get_item(Key={"user_id": user_id})
+            if "Item" in response:
+                return response["Item"].get("messages", {})
             return {}
         except Exception as e:
             print(f"Error getting conversation history: {e}")
@@ -42,25 +46,24 @@ class CacheClient:
         try:
             # 현재 메시지 가져오기
             current_messages = self.get_conversation_history(user_id)
-            
+
             # 메시지 타입에 따라 저장
-            message_type = message.get('type', 'message')
+            message_type = message.get("type", "message")
             if message_type not in current_messages:
                 current_messages[message_type] = []
-            
+
             # 새 메시지 추가
-            current_messages[message_type].append({
-                **message,
-                'timestamp': datetime.now().isoformat()
-            })
+            current_messages[message_type].append(
+                {**message, "timestamp": datetime.now().isoformat()}
+            )
             current_messages = convert_floats_to_int(current_messages)
-            
+
             # DynamoDB에 저장
             self.table.put_item(
                 Item={
-                    'user_id': user_id,
-                    'messages': current_messages,
-                    'updated_at': datetime.now().isoformat()
+                    "user_id": user_id,
+                    "messages": current_messages,
+                    "updated_at": datetime.now().isoformat(),
                 }
             )
         except Exception as e:
@@ -69,8 +72,9 @@ class CacheClient:
     def clear_conversation(self, user_id: str):
         """사용자의 대화 기록을 삭제합니다."""
         try:
-            self.table.delete_item(Key={'user_id': user_id})
+            self.table.delete_item(Key={"user_id": user_id})
         except Exception as e:
             print(f"Error clearing conversation: {e}")
 
-cache_client = CacheClient() 
+
+cache_client = CacheClient()

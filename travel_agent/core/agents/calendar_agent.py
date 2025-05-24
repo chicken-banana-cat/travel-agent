@@ -1,23 +1,25 @@
-from typing import Any, Dict, List, Optional
 from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
 
 from langchain.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from .base import BaseAgent
 from ...utils.cache_client import cache_client
+from .base import BaseAgent
 
 
 class CalendarAgent(BaseAgent):
     """캘린더 관리를 담당하는 에이전트"""
-    
+
     def __init__(self):
         super().__init__(
             name="calendar_agent",
-            description="여행 일정의 캘린더 관리를 담당하는 에이전트"
+            description="여행 일정의 캘린더 관리를 담당하는 에이전트",
         )
-        self.prompt = ChatPromptTemplate.from_messages([
-            SystemMessage(content="""당신은 캘린더 관리 전문가입니다.
+        self.prompt = ChatPromptTemplate.from_messages(
+            [
+                SystemMessage(
+                    content="""당신은 캘린더 관리 전문가입니다.
             여행 일정을 캘린더에 등록하고 관리합니다.
             일정 충돌을 방지하고 효율적인 시간 관리를 도와주세요.
             
@@ -26,12 +28,14 @@ class CalendarAgent(BaseAgent):
             2. 각 일정에 대해 사용자의 의견을 물어보고, 필요에 따라 수정을 제안합니다.
             3. 시간 충돌이나 비효율적인 일정 배치가 있다면 사용자에게 알려주세요.
             4. 사용자가 원하는 경우에만 일정을 등록하세요.
-            5. 예약이 필요한 활동은 사용자에게 알려주세요."""),
-            HumanMessage(content="{action}")
-        ])
-        
+            5. 예약이 필요한 활동은 사용자에게 알려주세요."""
+                ),
+                HumanMessage(content="{action}"),
+            ]
+        )
+
         self.tips = []
-    
+
     async def validate(self, input_data: Dict[str, Any]) -> bool:
         """캘린더 작업 유효성 검증"""
         # if "action" not in input_data:
@@ -42,77 +46,74 @@ class CalendarAgent(BaseAgent):
         #     return all(field in input_data for field in required_fields)
         #
         return True
-    
+
     def _parse_duration(self, duration_str: str) -> int:
         """시간 문자열을 분 단위로 변환"""
         hours = 0
         minutes = 0
-        
+
         if "시간" in duration_str:
             hours = int(duration_str.split("시간")[0])
             if "분" in duration_str:
                 minutes = int(duration_str.split("시간")[1].split("분")[0])
         elif "분" in duration_str:
             minutes = int(duration_str.split("분")[0])
-            
+
         return hours * 60 + minutes
-    
-    def _create_calendar_event(self, activity: Dict[str, Any], start_date: datetime, day: int) -> Dict[str, Any]:
+
+    def _create_calendar_event(
+        self, activity: Dict[str, Any], start_date: datetime, day: int
+    ) -> Dict[str, Any]:
         """캘린더 이벤트 생성"""
-        event_date = start_date + timedelta(days=day-1)
+        event_date = start_date + timedelta(days=day - 1)
         time_parts = activity["time"].split(":")
         event_datetime = event_date.replace(
-            hour=int(time_parts[0]),
-            minute=int(time_parts[1])
+            hour=int(time_parts[0]), minute=int(time_parts[1])
         )
-        
+
         duration_minutes = self._parse_duration(activity["duration"])
         end_datetime = event_datetime + timedelta(minutes=duration_minutes)
-        
+
         # 예약이 필요한 활동인지 확인
-        requires_reservation = "예약" in activity["activity"] or "사전 예약" in activity["activity"]
+        requires_reservation = (
+            "예약" in activity["activity"] or "사전 예약" in activity["activity"]
+        )
         # TODO 이벤트 google api 개발 필요
         return {
             "summary": activity["activity"],
             "location": activity["location"],
-            "start": {
-                "dateTime": event_datetime.isoformat(),
-                "timeZone": "Asia/Seoul"
-            },
-            "end": {
-                "dateTime": end_datetime.isoformat(),
-                "timeZone": "Asia/Seoul"
-            },
-            "description": f"비용: {int(activity['cost']):,}원\n장소: {activity['location']}\n" + 
-                          ("⚠️ 사전 예약이 필요한 활동입니다." if requires_reservation else "")
+            "start": {"dateTime": event_datetime.isoformat(), "timeZone": "Asia/Seoul"},
+            "end": {"dateTime": end_datetime.isoformat(), "timeZone": "Asia/Seoul"},
+            "description": f"비용: {int(activity['cost']):,}원\n장소: {activity['location']}\n"
+            + ("⚠️ 사전 예약이 필요한 활동입니다." if requires_reservation else ""),
         }
-    
+
     def _get_relevant_tips(self, activity: Dict[str, Any]) -> List[str]:
         """활동과 관련된 팁 반환"""
         relevant_tips = []
         activity_lower = activity["activity"].lower()
-        
+
         for tip in self.tips:
             tip_lower = tip.lower()
             if any(keyword in tip_lower for keyword in activity_lower.split()):
                 relevant_tips.append(tip)
-        
+
         return relevant_tips
-    
+
     async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """캘린더 작업 처리"""
         if not await self.validate(input_data):
             return {
                 "status": "error",
                 "error": "Invalid calendar operation",
-                "message": "필수 요구사항이 누락되었습니다."
+                "message": "필수 요구사항이 누락되었습니다.",
             }
         msg = input_data["context"]
         session_id = input_data["session_id"]
         session_data = cache_client.get_conversation_history(session_id)
         plan = session_data["plan"][-1]["data"]
         itinerary = plan["itinerary"]
-        start_date = datetime.fromisoformat(plan['departure_date'])
+        start_date = datetime.fromisoformat(plan["departure_date"])
         # 추천사항과 팁 저장
         init_conversation_state = {
             "current_day": None,
@@ -135,22 +136,26 @@ class CalendarAgent(BaseAgent):
 
             # 관련 팁 확인
             relevant_tips = self._get_relevant_tips(first_activity)
-            tips_message = "\n\n관련 팁:\n" + "\n".join(f"- {tip}" for tip in relevant_tips) if relevant_tips else ""
-            cache_client.add_message(session_id, {
-                                "type": "conversation_state",
-                                "data": init_conversation_state
-                            })
+            tips_message = (
+                "\n\n관련 팁:\n" + "\n".join(f"- {tip}" for tip in relevant_tips)
+                if relevant_tips
+                else ""
+            )
+            cache_client.add_message(
+                session_id,
+                {"type": "conversation_state", "data": init_conversation_state},
+            )
             return {
                 "status": "conversation",
                 "message": f"여행 첫날({first_day['day']}일차)의 첫 일정을 캘린더에 등록하시겠습니까? ({start_date})\n"
-                          f"시간: {first_activity['time']}\n"
-                          f"활동: {first_activity['activity']}\n"
-                          f"장소: {first_activity['location']}\n"
-                          f"소요시간: {first_activity['duration']}\n"
-                          f"비용: {int(first_activity['cost']):,}원"
-                          f"{tips_message}\n\n"
-                          f"등록하시려면 'yes', 건너뛰시려면 'skip', 종료하시려면 'done'을 입력해주세요.",
-                "conversation_state": init_conversation_state
+                f"시간: {first_activity['time']}\n"
+                f"활동: {first_activity['activity']}\n"
+                f"장소: {first_activity['location']}\n"
+                f"소요시간: {first_activity['duration']}\n"
+                f"비용: {int(first_activity['cost']):,}원"
+                f"{tips_message}\n\n"
+                f"등록하시려면 'yes', 건너뛰시려면 'skip', 종료하시려면 'done'을 입력해주세요.",
+                "conversation_state": init_conversation_state,
             }
 
         # 사용자 응답 처리
@@ -164,14 +169,14 @@ class CalendarAgent(BaseAgent):
                 "status": "success",
                 "operation": "register_itinerary",
                 "events": conversation_state["confirmed_events"],
-                "message": f"총 {len(conversation_state['confirmed_events'])}개의 일정이 캘린더에 등록되었습니다."
+                "message": f"총 {len(conversation_state['confirmed_events'])}개의 일정이 캘린더에 등록되었습니다.",
             }
 
         current_day = int(conversation_state["current_day"])
         current_activity = int(conversation_state["current_activity"])
 
         if user_response == "yes":
-            activity = itinerary[current_day-1]["activities"][current_activity]
+            activity = itinerary[current_day - 1]["activities"][current_activity]
             event = self._create_calendar_event(activity, start_date, current_day)
 
             # TODO 시간 충돌 확인
@@ -179,7 +184,7 @@ class CalendarAgent(BaseAgent):
 
         # 다음 일정으로 이동
         current_activity += 1
-        if current_activity >= len(itinerary[current_day-1]["activities"]):
+        if current_activity >= len(itinerary[current_day - 1]["activities"]):
             current_day += 1
             current_activity = 0
 
@@ -188,28 +193,31 @@ class CalendarAgent(BaseAgent):
                     "status": "success",
                     "operation": "register_itinerary",
                     "events": conversation_state["confirmed_events"],
-                    "message": f"총 {len(conversation_state['confirmed_events'])}개의 일정이 캘린더에 등록되었습니다."
+                    "message": f"총 {len(conversation_state['confirmed_events'])}개의 일정이 캘린더에 등록되었습니다.",
                 }
 
         conversation_state["current_day"] = current_day
         conversation_state["current_activity"] = current_activity
 
-        next_activity = itinerary[current_day-1]["activities"][current_activity]
+        next_activity = itinerary[current_day - 1]["activities"][current_activity]
         relevant_tips = self._get_relevant_tips(next_activity)
-        tips_message = "\n\n관련 팁:\n" + "\n".join(f"- {tip}" for tip in relevant_tips) if relevant_tips else ""
-        cache_client.add_message(session_id, {
-            "type": "conversation_state",
-            "data": conversation_state
-        })
+        tips_message = (
+            "\n\n관련 팁:\n" + "\n".join(f"- {tip}" for tip in relevant_tips)
+            if relevant_tips
+            else ""
+        )
+        cache_client.add_message(
+            session_id, {"type": "conversation_state", "data": conversation_state}
+        )
         return {
             "status": "conversation",
             "message": f"{current_day}일차의 다음 일정을 캘린더에 등록하시겠습니까?\n"
-                      f"시간: {next_activity['time']}\n"
-                      f"활동: {next_activity['activity']}\n"
-                      f"장소: {next_activity['location']}\n"
-                      f"소요시간: {next_activity['duration']}\n"
-                      f"비용: {int(next_activity['cost']):,}원"
-                      f"{tips_message}\n\n"
-                      f"등록하시려면 'yes', 건너뛰시려면 'skip', 종료하시려면 'done'을 입력해주세요.",
-            "conversation_state": conversation_state
+            f"시간: {next_activity['time']}\n"
+            f"활동: {next_activity['activity']}\n"
+            f"장소: {next_activity['location']}\n"
+            f"소요시간: {next_activity['duration']}\n"
+            f"비용: {int(next_activity['cost']):,}원"
+            f"{tips_message}\n\n"
+            f"등록하시려면 'yes', 건너뛰시려면 'skip', 종료하시려면 'done'을 입력해주세요.",
+            "conversation_state": conversation_state,
         }

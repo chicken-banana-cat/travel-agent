@@ -1,22 +1,20 @@
-from typing import Dict, Any, List, Iterable
+import json
+from typing import Any, Dict, Iterable, List
+
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
-from ..config.settings import settings
-from ...utils import update_dict
-import json
 
+from ...utils import update_dict
 from ...utils.cache_client import cache_client
+from ..config.settings import settings
 
 
 class RecommendationAgent:
     """여행 추천을 위한 대화형 에이전트"""
 
     def __init__(self):
-        self.llm = ChatOpenAI(
-            model=settings.MODEL_NAME,
-            temperature=0.7
-        )
+        self.llm = ChatOpenAI(model=settings.MODEL_NAME, temperature=0.7)
 
         # 추천 단계 정의
         self.recommendation_steps = {
@@ -52,7 +50,13 @@ class RecommendationAgent:
                         "transportation": "교통수단 선호도"
                     }},
                 }}""",
-                "required_fields": ["travel_style", "activities", "budget", "accommodation", "transportation"]
+                "required_fields": [
+                    "travel_style",
+                    "activities",
+                    "budget",
+                    "accommodation",
+                    "transportation",
+                ],
             },
             "destination": {
                 "prompt": """사용자의 선호도를 바탕으로 여행지를 추천해주세요. 그리고 사용자에게 갈 여행지를 물어보세요.
@@ -84,8 +88,8 @@ class RecommendationAgent:
                         }}
                     ],
                 }}""",
-                "required_fields": ["recommendations"]
-            }
+                "required_fields": ["recommendations"],
+            },
         }
 
     async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -114,17 +118,20 @@ class RecommendationAgent:
             additional_context = {}
         # 컨텍스트에 따라 프롬프트 포맷팅
         if current_step == "preferences":
-            prompt_content = step_config["prompt"].format(current_context=context,
-                                                          additional_context=additional_context)
+            prompt_content = step_config["prompt"].format(
+                current_context=context, additional_context=additional_context
+            )
             formatted_prompt = [
                 SystemMessage(content=prompt_content),
-                HumanMessage(content=message)
+                HumanMessage(content=message),
             ]
         else:  # destination 단계
-            prompt_content = step_config["prompt"].format(preferences=context, additional_context=additional_context)
+            prompt_content = step_config["prompt"].format(
+                preferences=context, additional_context=additional_context
+            )
             formatted_prompt = [
                 SystemMessage(content=prompt_content),
-                HumanMessage(content=message)
+                HumanMessage(content=message),
             ]
 
         # LLM 호출
@@ -145,25 +152,27 @@ class RecommendationAgent:
                     return {
                         "status": "error",
                         "message": f"LLM 추천 중 오류가 발생했습니다.: {str(last_error)}",
-                        "current_step": current_step
+                        "current_step": current_step,
                     }
                 continue
 
             # 다음 단계 결정
         if current_step == "preferences":
             # 모든 필수 정보가 수집되었는지 확인
-            collected_info = update_dict(before_collected_info, result.get("collected_info", {}))
+            collected_info = update_dict(
+                before_collected_info, result.get("collected_info", {})
+            )
             missing_fields = [
-                field for field in step_config["required_fields"]
+                field
+                for field in step_config["required_fields"]
                 if not collected_info.get(field)
             ]
             if not missing_fields:
                 collected_info["next_step"] = "destination"
             else:
                 collected_info["next_step"] = "preferences"
-            cache_client.add_message(session_id, {
-                "type": "collected_info",
-                "data": collected_info
-            })
+            cache_client.add_message(
+                session_id, {"type": "collected_info", "data": collected_info}
+            )
 
         return result
