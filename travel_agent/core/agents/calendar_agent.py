@@ -1,9 +1,15 @@
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+import os
+import json
+from pathlib import Path
 
 from langchain.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from ..config.settings import settings
 from ...utils.cache_client import cache_client
 from .base import BaseAgent
 
@@ -35,6 +41,7 @@ class CalendarAgent(BaseAgent):
         )
 
         self.tips = []
+        self.email = None
 
     async def validate(self, input_data: Dict[str, Any]) -> bool:
         """캘린더 작업 유효성 검증"""
@@ -78,8 +85,8 @@ class CalendarAgent(BaseAgent):
         requires_reservation = (
             "예약" in activity["activity"] or "사전 예약" in activity["activity"]
         )
-        # TODO 이벤트 google api 개발 필요
-        return {
+        
+        event = {
             "summary": activity["activity"],
             "location": activity["location"],
             "start": {"dateTime": event_datetime.isoformat(), "timeZone": "Asia/Seoul"},
@@ -87,6 +94,33 @@ class CalendarAgent(BaseAgent):
             "description": f"비용: {int(activity['cost']):,}원\n장소: {activity['location']}\n"
             + ("⚠️ 사전 예약이 필요한 활동입니다." if requires_reservation else ""),
         }
+        
+        # Google Calendar API 호출
+        creds = self._get_credentials()
+        service = build('calendar', 'v3', credentials=creds)
+        created_event = service.events().insert(calendarId=self.email, body=event).execute()
+        
+        return created_event
+
+    def _get_credentials(self) -> service_account.Credentials:
+        """Google API 인증 정보를 가져옵니다."""
+        info = {
+            "type": "service_account",
+            "project_id": "travel-agent-460815",
+            "private_key_id": os.environ["GOOGLE_PRIVATE_KEY_ID"],
+            "private_key": os.environ["GOOGLE_PRIVATE_KEY"].replace("\\n", "\n"),
+            "client_email": "travel-agent-calendar@travel-agent-460815.iam.gserviceaccount.com",
+            "client_id": os.environ["GOOGLE_CLIENT_ID"],
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+            "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/travel-agent-calendar%40travel-agent-460815.iam.gserviceaccount.com",
+            "universe_domain": "googleapis.com"
+        }
+        credentials = service_account.Credentials.from_service_account_info(
+            info, scopes=["https://www.googleapis.com/auth/calendar"]
+        )
+        return credentials
 
     def _get_relevant_tips(self, activity: Dict[str, Any]) -> List[str]:
         """활동과 관련된 팁 반환"""

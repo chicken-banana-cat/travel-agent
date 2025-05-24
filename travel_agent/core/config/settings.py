@@ -52,9 +52,11 @@ class Settings(BaseSettings):
     AWS_SECRET_ACCESS_KEY: str
     AWS_REGION: str
     AWS_SQS_URL: str
-    # 기본 모델 설정
     MODEL_NAME: str
     AWS_ACCOUNT_ID: str
+    GOOGLE_CLIENT_ID: str
+    GOOGLE_PRIVATE_KEY_ID: str
+    GOOGLE_PRIVATE_KEY: str
 
     # 모델 설정
     models: Dict[str, ModelConfig] = Field(

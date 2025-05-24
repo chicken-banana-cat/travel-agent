@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from travel_agent.core.agents.orchestrator import Orchestrator
 
-from ...utils.cache_client import cache_client
+from ...utils.cache_client import cache_client, convert_floats_to_int
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO)
@@ -56,7 +56,8 @@ async def stream_response(
             }
         ):
             if chunk["status"] in ["success", "need_more_info"]:
-                yield f"data: {json.dumps(chunk['result'])}\n\n"
+                res = convert_floats_to_int(chunk['result'])
+                yield f"data: {json.dumps(res)}\n\n"
 
                 # 컨텍스트와 이전 결과 업데이트
                 if session_id:
