@@ -167,7 +167,7 @@ const sendMessage = async () => {
               }
             } else if (parsed.recommendations) {
               // 추천 여행지가 있는 경우 포맷팅하여 표시
-              if (parsed.message) {
+              if (parsed.message && !isDuplicateMessage(parsed.message)) {
                 messages.value.push({ type: 'bot', content: parsed.message })
                 lastMessage.value = parsed.message
               }
@@ -178,7 +178,7 @@ const sendMessage = async () => {
               }
             } else if (parsed.operation === 'register_itinerary') {
               // 메시지 표시
-              if (parsed.message) {
+              if (parsed.message && !isDuplicateMessage(parsed.message)) {
                 messages.value.push({ type: 'bot', content: parsed.message })
                 lastMessage.value = parsed.message
               }
