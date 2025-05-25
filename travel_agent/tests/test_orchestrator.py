@@ -1,4 +1,3 @@
-import asyncio
 import os
 from pathlib import Path
 
@@ -17,9 +16,6 @@ else:
 from langchain_core.messages import HumanMessage
 
 from travel_agent.core.agents.orchestrator import Orchestrator
-
-# settings 모듈을 먼저 import
-from travel_agent.core.config.settings import settings
 
 
 @pytest.fixture(autouse=True)

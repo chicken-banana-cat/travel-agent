@@ -40,28 +40,16 @@ celery_app.conf.update(
 
 @celery_app.task(name="process_search_and_mail")
 def process_search_and_mail(context: dict, email: str, plan: dict):
-    """
-    Process search and send email with results.
-
-    Args:
-        context (dict): Context information
-        email (str): Recipient email address
-        plan (dict): Plan information
-    """
     try:
-        # Initialize agents
         search_agent = SearchAgent()
         mail_agent = MailAgent()
 
-        # Create event loop for async operations
         loop = asyncio.get_event_loop()
 
-        # Process search
         search_result = loop.run_until_complete(
             search_agent.process({"plan": plan, "context": context})
         )
 
-        # Send email
         loop.run_until_complete(
             mail_agent.process(
                 {
@@ -76,4 +64,4 @@ def process_search_and_mail(context: dict, email: str, plan: dict):
         return
     except Exception as e:
         logger.error(f"Task failed with error: {str(e)}", exc_info=True)
-        raise  # Re-raise the exception to ensure Celery knows the task failed
+        raise e

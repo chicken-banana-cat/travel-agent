@@ -1,15 +1,15 @@
 import json
 import logging
 import traceback
-from typing import Any, AsyncGenerator, Dict, List
+from typing import Any, AsyncGenerator, Dict
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from travel_agent.core.agents.orchestrator import Orchestrator
+from travel_agent.utils.cache_client import cache_client, convert_floats_to_int
 
-from ...utils.cache_client import cache_client, convert_floats_to_int
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO)
@@ -101,25 +101,6 @@ async def stream_response(
         yield "event: complete\ndata: {}\n\n"
 
 
-@router.post("/chat")
-async def chat(user_id: str, message: str):
-    try:
-        # 캐시에서 대화 기록 가져오기
-        messages = cache_client.get_conversation_history(user_id)
-
-        # 새 메시지 추가
-        new_message = {"role": "user", "content": message}
-        cache_client.add_message(user_id, new_message)
-        messages.append(new_message)
-
-        # 여기에 에이전트 처리 로직 추가
-        # ...
-
-        return {"status": "success", "messages": messages}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @router.delete("/chat/{user_id}")
 async def clear_chat(user_id: str):
     try:
@@ -144,41 +125,3 @@ async def chat(message: str, session_id: str = None) -> StreamingResponse:
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
-#
-# @router.websocket("/ws/chat")
-# async def websocket_endpoint(websocket: WebSocket):
-#     await websocket.accept()
-#
-#     # 세션 ID 생성 (실제로는 더 안전한 방법 사용 필요)
-#     session_id = str(id(websocket))
-#     conversation_history[session_id] = []
-#
-#     try:
-#         while True:
-#             # 메시지 수신
-#             message = await websocket.receive_text()
-#
-#             # 현재 세션의 대화 히스토리 가져오기
-#             messages = conversation_history[session_id]
-#
-#             # 메시지 처리 및 스트리밍
-#             async for chunk in orchestrator.process_stream({
-#                 "message": message,
-#                 "messages": messages
-#             }):
-#                 if chunk["status"] in ["success", "need_more_info"]:
-#                     # 응답에 메시지 히스토리 포함
-#                     yield f"data: {json.dumps(chunk['result'])}\n\n"
-#
-#                     # 대화 히스토리 업데이트
-#                     if "messages" in chunk:
-#                         conversation_history[session_id] = chunk["messages"]
-#                 else:
-#                     yield f"data: {json.dumps({'error': 'Failed to process message'})}\n\n"
-#
-#     except WebSocketDisconnect:
-#         # 연결 종료 시 세션 정리
-#         if session_id in conversation_history:
-#             del conversation_history[session_id]

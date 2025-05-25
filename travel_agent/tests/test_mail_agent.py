@@ -1,4 +1,3 @@
-import asyncio
 import os
 from pathlib import Path
 
@@ -18,7 +17,6 @@ else:
     os.environ["SENDER_EMAIL"] = "test@test.com"
 
 from travel_agent.core.agents.mail_agent import MailAgent
-from travel_agent.core.config.settings import settings
 
 
 @pytest.fixture(autouse=True)

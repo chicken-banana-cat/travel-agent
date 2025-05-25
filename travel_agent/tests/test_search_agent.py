@@ -17,10 +17,6 @@ else:
 
 from travel_agent.core.agents.search_agent import SearchAgent
 
-# settings 모듈을 먼저 import
-from travel_agent.core.config.settings import settings
-
-
 @pytest.fixture(autouse=True)
 def setup_env():
     """테스트에 필요한 환경변수 설정"""

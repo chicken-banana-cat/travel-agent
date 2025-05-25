@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -6,7 +5,6 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
 
-# Load environment variables from .env file
 PROJECT_ROOT = Path.cwd()
 env_path = PROJECT_ROOT.parent / ".env"
 if env_path.exists():
@@ -61,12 +59,13 @@ class Settings(BaseSettings):
     # 모델 설정
     models: Dict[str, ModelConfig] = Field(
         default_factory=lambda: {
-            "gpt-4.1-mini-2025-04-14": ModelConfig(
-                name="gpt-4.1-mini-2025-04-14", provider="openai", temperature=0.7
+            "gpt-4.1-mini": ModelConfig(
+                name="gpt-4.1-mini", provider="openai", temperature=0.7
             ),
             "claude-3-opus": ModelConfig(
                 name="claude-3-opus", provider="anthropic", temperature=0.7
             ),
+            # TODO 사용할 모델 설정 추가
         }
     )
 
@@ -74,37 +73,34 @@ class Settings(BaseSettings):
     agent_configs: Dict[str, AgentConfig] = Field(
         default_factory=lambda: {
             "orchestrator": AgentConfig(
-                primary_model="gpt-4.1-mini-2025-04-14", fallback_models=["gpt-4"]
+                primary_model="gpt-4.1-mini", fallback_models=["gpt-4"]
             ),
             "search_agent": AgentConfig(
-                primary_model="gpt-4.1-mini-2025-04-14", fallback_models=[]
+                primary_model="gpt-4.1-mini", fallback_models=[]
             ),
             "planner_agent": AgentConfig(
-                primary_model="gpt-4.1-mini-2025-04-14", fallback_models=["gpt-4"]
+                primary_model="gpt-4.1-mini", fallback_models=["gpt-4"]
             ),
             "calendar_agent": AgentConfig(
-                primary_model="gpt-4.1-mini-2025-04-14", fallback_models=[]
+                primary_model="gpt-4.1-mini", fallback_models=[]
             ),
             "mail_agent": AgentConfig(
-                primary_model="gpt-4.1-mini-2025-04-14", fallback_models=[]
+                primary_model="gpt-4.1-mini", fallback_models=[]
             ),
         }
     )
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # MODEL_NAME을 사용하여 모든 에이전트의 primary_model 업데이트
+        for agent_config in self.agent_configs.values():
+            agent_config.primary_model = self.MODEL_NAME
 
     class Config:
         env_file = str(env_path)
         env_file_encoding = "utf-8"
         env_prefix = ""
         case_sensitive = True
-
-
-# 디버그: 환경 변수 로딩 확인
-print("Current working directory:", os.getcwd())
-print("Environment variables:")
-print("OPENAI_API_KEY:", os.getenv("OPENAI_API_KEY"))
-print("MODEL_NAME:", os.getenv("MODEL_NAME"))
-print("ENV file path:", env_path)
-print("ENV file exists:", env_path.exists())
 
 try:
     settings = Settings()

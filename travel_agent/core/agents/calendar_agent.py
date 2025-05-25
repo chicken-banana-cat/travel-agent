@@ -1,16 +1,13 @@
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 import os
-import json
-from pathlib import Path
 
 from langchain.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from ..config.settings import settings
-from ...utils.cache_client import cache_client
+from travel_agent.utils.cache_client import cache_client
 from .base import BaseAgent
 
 

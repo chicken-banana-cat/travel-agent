@@ -1,13 +1,12 @@
 import json
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, List
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
-
-from ...utils import update_dict
-from ...utils.cache_client import cache_client
-from ..config.settings import settings
+from tenacity import retry, stop_after_attempt, retry_if_exception_type, RetryError
+from travel_agent.utils import update_dict
+from travel_agent.core.config.settings import settings
+from travel_agent.utils.cache_client import cache_client
 
 
 class RecommendationAgent:
@@ -92,87 +91,102 @@ class RecommendationAgent:
             },
         }
 
+    @retry(
+        stop=stop_after_attempt(3),
+        retry=retry_if_exception_type(json.JSONDecodeError),
+        reraise=True
+    )
+    async def _get_llm_recommendation(
+        self,
+        formatted_prompt: List[SystemMessage | HumanMessage],
+        current_step: str
+    ) -> Dict[str, Any]:
+        """LLM을 통한 추천 결과 가져오기"""
+        try:
+            response = await self.llm.ainvoke(formatted_prompt)
+            content = response.content.strip()
+            return json.loads(content)
+        except RetryError as e:
+            return {
+                "status": "error",
+                "message": f"LLM 추천 중 오류가 발생했습니다.: {str(e.last_attempt.exception())}",
+                "current_step": current_step,
+            }
+
     async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """메시지 처리 및 추천 단계 진행"""
+        """추천 처리"""
         message = input_data.get("message", "")
-        current_step = "preferences"
-        session_id = input_data["session_id"]
+        session_id = input_data.get("session_id", "")
+
+        # 현재 단계 확인
         session_data = cache_client.get_conversation_history(session_id)
-        previous_collected_info = session_data.get("collected_info", [])
-        if previous_collected_info and isinstance(previous_collected_info, Iterable):
-            before_collected_info = previous_collected_info[-1]["data"] or {}
-        else:
-            before_collected_info = {}
-
-        if step := before_collected_info.get("next_step"):
-            current_step = step
-
-        # 현재 단계의 프롬프트 가져오기
-        step_config = self.recommendation_steps[current_step]
-        context = json.dumps(before_collected_info, ensure_ascii=False, indent=2)
-
+        collected_info = {}
+        before_collected_info = session_data.get("collected_info", [])
+        if before_collected_info:
+            collected_info = before_collected_info[-1].get("data", {})
         before_contexts = session_data.get("context", [])
+        current_step = collected_info.get("next_step", "preferences")
+
+
         if before_contexts:
             additional_context = before_contexts[-1].get("data", {})
         else:
             additional_context = {}
+        # 단계별 처리
+        if current_step == "preferences":
+            return await self._process_preferences(message, collected_info, additional_context, session_id)
+        elif current_step == "destination":
+            return await self._process_destination(message, collected_info, additional_context)
+        else:
+            return {
+                "status": "error",
+                "message": "잘못된 추천 단계입니다.",
+                "current_step": current_step,
+            }
+
+    async def _process_preferences(self, message: str, collected_info: Dict[str, Any], additional_context: dict, session_id: str) -> Dict[str, Any]:
+        """환경 정보 수집 및 추천 단계 진행"""
+        step_config = self.recommendation_steps["preferences"]
+        context = json.dumps(collected_info, ensure_ascii=False, indent=2)
         # 컨텍스트에 따라 프롬프트 포맷팅
-        if current_step == "preferences":
-            prompt_content = step_config["prompt"].format(
-                current_context=context, additional_context=additional_context
-            )
-            formatted_prompt = [
-                SystemMessage(content=prompt_content),
-                HumanMessage(content=message),
-            ]
-        else:  # destination 단계
-            prompt_content = step_config["prompt"].format(
-                preferences=context, additional_context=additional_context
-            )
-            formatted_prompt = [
-                SystemMessage(content=prompt_content),
-                HumanMessage(content=message),
-            ]
+        prompt_content = step_config["prompt"].format(
+            current_context=context, additional_context=additional_context
+        )
+        formatted_prompt = [
+            SystemMessage(content=prompt_content),
+            HumanMessage(content=message),
+        ]
 
-        # LLM 호출
-        max_retries = 3
-        retry_count = 0
-        result = {}
+        result = await self._get_llm_recommendation(formatted_prompt, "preferences")
 
-        while retry_count < max_retries:
-            try:
-                response = await self.llm.ainvoke(formatted_prompt)
-                content = response.content.strip()
-                result = json.loads(content)
-                break
-            except Exception as e:
-                last_error = e
-                retry_count += 1
-                if retry_count == max_retries:
-                    return {
-                        "status": "error",
-                        "message": f"LLM 추천 중 오류가 발생했습니다.: {str(last_error)}",
-                        "current_step": current_step,
-                    }
-                continue
+        # 모든 필수 정보가 수집되었는지 확인
+        collected_info = update_dict(collected_info, result.get("collected_info", {}))
+        missing_fields = [
+            field
+            for field in step_config["required_fields"]
+            if not collected_info.get(field)
+        ]
+        if not missing_fields:
+            collected_info["next_step"] = "destination"
+        else:
+            collected_info["next_step"] = "preferences"
+        cache_client.add_message(session_id, {"type": "collected_info", "data": collected_info})
 
-            # 다음 단계 결정
-        if current_step == "preferences":
-            # 모든 필수 정보가 수집되었는지 확인
-            collected_info = update_dict(
-                before_collected_info, result.get("collected_info", {})
-            )
-            missing_fields = [
-                field
-                for field in step_config["required_fields"]
-                if not collected_info.get(field)
-            ]
-            if not missing_fields:
-                collected_info["next_step"] = "destination"
-            else:
-                collected_info["next_step"] = "preferences"
-            cache_client.add_message(
-                session_id, {"type": "collected_info", "data": collected_info}
-            )
+        return result
+
+    async def _process_destination(self, message: str, collected_info: Dict[str, Any], additional_context: dict) -> Dict[str, Any]:
+        """여행지 추천 및 추천 단계 진행"""
+        step_config = self.recommendation_steps["destination"]
+        context = json.dumps(collected_info, ensure_ascii=False, indent=2)
+        # 컨텍스트에 따라 프롬프트 포맷팅
+        prompt_content = step_config["prompt"].format(
+            preferences=context, additional_context=additional_context
+        )
+        formatted_prompt = [
+            SystemMessage(content=prompt_content),
+            HumanMessage(content=message),
+        ]
+
+        result = await self._get_llm_recommendation(formatted_prompt, "destination")
 
         return result

@@ -6,11 +6,13 @@ from langchain_core.prompts import ChatPromptTemplate, SystemMessagePromptTempla
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
 from langgraph.pregel import Pregel
+from tenacity import retry, stop_after_attempt, retry_if_exception_type, RetryError
 
-from ...tasks import process_search_and_mail
-from ...utils import update_dict
-from ...utils.cache_client import cache_client
-from ..config.settings import settings
+from travel_agent.tasks import process_search_and_mail
+from travel_agent.utils import update_dict
+from travel_agent.core.config.settings import settings
+from travel_agent.utils.cache_client import cache_client
+
 from .calendar_agent import CalendarAgent
 from .mail_agent import MailAgent
 from .planner_agent import PlannerAgent
@@ -173,7 +175,42 @@ class Orchestrator:
         session_data = cache_client.get_conversation_history(session_id)
 
         # 이메일 입력 처리
-        msg = messages[-1].content.strip()
+        if await self._handle_email_input(state, session_data, session_id):
+            return state
+
+        # 컨텍스트 및 수집된 정보 가져오기
+        current_context = self._get_current_context(session_data)
+        last_collected_info = self._get_last_collected_info(session_data)
+
+        # 캘린더 등록 확인 응답 처리
+        if self._is_calendar_confirmation(session_data):
+            state["current_agent"] = "calendar"
+            state["context"] = messages[-1].content.strip()
+            return state
+
+        # LLM을 통한 의도 분석
+        intent_analysis = await self._analyze_intent_with_llm(
+            messages[-1].content,
+            current_context,
+            last_collected_info
+        )
+
+        if not intent_analysis:
+            state["next_steps"] = ["analyze_intent"]
+            state["current_agent"] = None
+            return state
+
+        # 의도 분석 결과 처리
+        return await self._process_intent_analysis(
+            state,
+            intent_analysis,
+            current_context,
+            session_id
+        )
+
+    async def _handle_email_input(self, state: AgentState, session_data: dict, session_id: str) -> bool:
+        """이메일 입력 처리"""
+        msg = state["messages"][-1].content.strip()
         if "@" in msg and "." in msg and session_data.get("plan"):
             plan = session_data["plan"][-1]["data"]
             context = session_data["context"][-1]["data"]
@@ -182,7 +219,6 @@ class Orchestrator:
                 queue="travel-agent-queue",
             )
 
-            # 캘린더 등록 여부 확인
             state["result"] = {
                 "status": "need_more_info",
                 "message": "이메일이 등록되었습니다. 검색 결과는 이메일로 전송됩니다. 캘린더에 여행 일정을 등록하시겠습니까? (예/아니오)",
@@ -192,28 +228,38 @@ class Orchestrator:
             }
             state["next_steps"] = ["analyze_intent"]
             cache_client.add_message(session_id, {"type": "email", "data": msg})
-            return state
+            return True
+        return False
 
+    def _get_current_context(self, session_data: dict) -> dict:
+        """현재 컨텍스트 가져오기"""
         before_contexts = session_data.get("context", [])
-        if before_contexts:
-            current_context = before_contexts[-1].get("data", {})
-        else:
-            current_context = {}
+        return before_contexts[-1].get("data", {}) if before_contexts else {}
 
-        # 캘린더 등록 확인 응답 처리
-        if emails := session_data.get("email") and session_data.get("plan"):
-            state["current_agent"] = "calendar"
-            state["context"] = msg
-            return state
-
+    def _get_last_collected_info(self, session_data: dict) -> dict:
+        """마지막으로 수집된 정보 가져오기"""
         last_collected_info = session_data.get("collected_info", [])
-        if last_collected_info:
-            last_collected_info = last_collected_info[-1]["data"]
+        return last_collected_info[-1]["data"] if last_collected_info else {}
 
-        prompt = ChatPromptTemplate.from_messages(
-            [
-                SystemMessagePromptTemplate.from_template(
-                    """당신은 여행 계획 조율자입니다.
+    def _is_calendar_confirmation(self, session_data: dict) -> bool:
+        """캘린더 등록 확인 여부"""
+        return bool(session_data.get("email") and session_data.get("plan"))
+
+    @retry(
+        stop=stop_after_attempt(3),
+        retry=retry_if_exception_type((json.JSONDecodeError, Exception)),
+        reraise=True
+    )
+    async def _analyze_intent_with_llm(
+        self,
+        message: str,
+        current_context: dict,
+        last_collected_info: dict,
+    ) -> Optional[dict]:
+        """LLM을 통한 의도 분석"""
+        prompt = ChatPromptTemplate.from_messages([
+            SystemMessagePromptTemplate.from_template(
+                """당신은 여행 계획 조율자입니다.
             사용자의 메시지를 분석하여 어떤 에이전트가 처리해야 할지 결정하세요.
             
             가능한 의도:
@@ -287,173 +333,151 @@ class Orchestrator:
                     }}
                 }}
             }}"""
-                ),
-                HumanMessage(content=messages[-1].content),
-            ]
-        )
-
-        pp = prompt.format_messages(
-            current_context=json.dumps(current_context, ensure_ascii=False, indent=2),
-            last_collected_info=json.dumps(
-                last_collected_info, ensure_ascii=False, indent=2
             ),
-        )
-
-        response = await self.llm.ainvoke(pp)
+            HumanMessage(content=message),
+        ])
 
         try:
-            intent_analysis = json.loads(response.content)
-
-            # 현재 컨텍스트에 있는 필드가 missing_info에 포함되어 있는지 확인
-            if intent_analysis.get("missing_info", {}).get("fields"):
-                missing_fields = intent_analysis["missing_info"]["fields"]
-                extracted_context = intent_analysis.get("extracted_context", {})
-
-                def is_field_in_context(field: str, context: dict) -> bool:
-                    if "." in field:
-                        parent, child = field.split(".")
-                        return (
-                            parent in context
-                            and context[parent] is not None
-                            and child in context[parent]
-                        )
-                    return field in context and context[field] is not None
-
-                # 현재 컨텍스트와 extracted_context에 있는 필드는 missing_info에서 제거
-                intent_analysis["missing_info"]["fields"] = [
-                    field
-                    for field in missing_fields
-                    if not (
-                        is_field_in_context(field, current_context)
-                        or is_field_in_context(field, extracted_context)
-                    )
-                ]
-
-                if not intent_analysis["missing_info"]["fields"]:
-                    intent_analysis.pop("missing_info", None)
-
-            # 에이전트별 필수 컨텍스트 설정
-            required_context = {
-                "search": {"query": None, "location": None, "type": None},
-                "planner": {
-                    "departure_location": None,
-                    "departure_date": None,
-                    "destination": None,
-                    "duration": None,
-                    "preferences": {
-                        "budget": None,
-                        "activities": [],
-                        "accommodation": None,
-                        "transportation": None,
-                    },
-                },
-                "calendar": {
-                    "event_details": {
-                        "title": None,
-                        "start_date": None,
-                        "end_date": None,
-                        "location": None,
-                        "description": None,
-                    }
-                },
-                "recommendation": {
-                    "recommendation_step": None,
-                    "collected_info": {
-                        "travel_style": None,
-                        "activities": [],
-                        "budget": None,
-                        "accommodation": None,
-                        "transportation": None,
-                    },
-                },
-            }
-            target_context = required_context.get(intent_analysis["primary_intent"], {})
-
-            cache_client.add_message(
-                session_id,
-                {"type": "primary_intent", "data": intent_analysis["primary_intent"]},
+            response = await self.llm.ainvoke(
+                prompt.format_messages(
+                    current_context=json.dumps(current_context, ensure_ascii=False, indent=2),
+                    last_collected_info=json.dumps(last_collected_info, ensure_ascii=False, indent=2)
+                )
             )
+            return json.loads(response.content)
+        except RetryError as e:
+            return {
+                "status": "error",
+                "message": f"LLM 의도 분석 중 오류가 발생했습니다.: {str(e.last_attempt.exception())}",
+                "current_step": "analyze_intent",
+            }
 
-            # 추출된 컨텍스트가 있는 경우 업데이트
-            if intent_analysis.get("extracted_context"):
-                for field, value in intent_analysis["extracted_context"].items():
-                    if "." in field:
-                        parent, child = field.split(".")
-                        if parent not in target_context:
-                            target_context[parent] = {}
-                        if value is not None:  # None이 아닌 경우에만 업데이트
-                            target_context[parent][child] = value
-                    else:
-                        if value is not None:  # None이 아닌 경우에만 업데이트
-                            target_context[field] = value
+    async def _process_intent_analysis(
+        self,
+        state: AgentState,
+        intent_analysis: dict,
+        current_context: dict,
+        session_id: str
+    ) -> AgentState:
+        """의도 분석 결과 처리"""
+        # 현재 컨텍스트에 있는 필드가 missing_info에 포함되어 있는지 확인
+        if intent_analysis.get("missing_info", {}).get("fields"):
+            missing_fields = intent_analysis["missing_info"]["fields"]
+            extracted_context = intent_analysis.get("extracted_context", {})
 
-            if intent_analysis["primary_intent"] == "recommendation":
-                state["current_agent"] = "recommendation"
-                state["context"] = update_dict(current_context, target_context)
-                cache_client.add_message(
-                    session_id, {"type": "context", "data": state["context"]}
+            def is_field_in_context(field: str, context: dict) -> bool:
+                if "." in field:
+                    parent, child = field.split(".")
+                    return (
+                        parent in context
+                        and context[parent] is not None
+                        and child in context[parent]
+                    )
+                return field in context and context[field] is not None
+
+            # 현재 컨텍스트와 extracted_context에 있는 필드는 missing_info에서 제거
+            intent_analysis["missing_info"]["fields"] = [
+                field
+                for field in missing_fields
+                if not (
+                    is_field_in_context(field, current_context)
+                    or is_field_in_context(field, extracted_context)
                 )
-                state["next_steps"] = []
-                return state
+            ]
 
-            # 누락된 정보가 있는 경우
-            if intent_analysis.get("missing_info") and intent_analysis[
-                "missing_info"
-            ].get("fields"):
-                examples = intent_analysis["missing_info"].get("examples", {})
+            if not intent_analysis["missing_info"]["fields"]:
+                intent_analysis.pop("missing_info", None)
 
-                # 이전 컨텍스트 유지하면서 업데이트
-                state["context"] = update_dict(current_context, target_context)
-                cache_client.add_message(
-                    session_id, {"type": "context", "data": state["context"]}
-                )
-
-                state["result"] = {
-                    "status": "need_more_info",
-                    "message": intent_analysis["missing_info"]["message"],
-                    "missing_fields": missing_fields,
-                    "examples": examples,
-                    "current_context": state["context"],
+        # 에이전트별 필수 컨텍스트 설정
+        required_context = {
+            "search": {"query": None, "location": None, "type": None},
+            "planner": {
+                "departure_location": None,
+                "departure_date": None,
+                "destination": None,
+                "duration": None,
+                "preferences": {
+                    "budget": None,
+                    "activities": [],
+                    "accommodation": None,
+                    "transportation": None,
+                },
+            },
+            "calendar": {
+                "event_details": {
+                    "title": None,
+                    "start_date": None,
+                    "end_date": None,
+                    "location": None,
+                    "description": None,
                 }
-                state["next_steps"] = ["analyze_intent"]
-                state["current_agent"] = None
-            else:
-                # 필요한 정보가 모두 있는 경우
-                state["current_agent"] = intent_analysis["primary_intent"]
-                state["context"] = update_dict(current_context, target_context)
-                state["next_steps"] = intent_analysis["suggested_next_steps"]
+            },
+            "recommendation": {
+                "recommendation_step": None,
+                "collected_info": {
+                    "travel_style": None,
+                    "activities": [],
+                    "budget": None,
+                    "accommodation": None,
+                    "transportation": None,
+                },
+            },
+        }
+        target_context = required_context.get(intent_analysis["primary_intent"], {})
 
+        cache_client.add_message(
+            session_id,
+            {"type": "primary_intent", "data": intent_analysis["primary_intent"]},
+        )
+
+        # 추출된 컨텍스트가 있는 경우 업데이트
+        if intent_analysis.get("extracted_context"):
+            for field, value in intent_analysis["extracted_context"].items():
+                if "." in field:
+                    parent, child = field.split(".")
+                    if parent not in target_context:
+                        target_context[parent] = {}
+                    if value is not None:  # None이 아닌 경우에만 업데이트
+                        target_context[parent][child] = value
+                else:
+                    if value is not None:  # None이 아닌 경우에만 업데이트
+                        target_context[field] = value
+
+        if intent_analysis["primary_intent"] == "recommendation":
+            state["current_agent"] = "recommendation"
+            state["context"] = update_dict(current_context, target_context)
+            cache_client.add_message(
+                session_id, {"type": "context", "data": state["context"]}
+            )
+            state["next_steps"] = []
             return state
 
-        except json.JSONDecodeError:
-            # JSON 파싱 실패 시 대화형 응답으로 처리
+        # 누락된 정보가 있는 경우
+        if intent_analysis.get("missing_info") and intent_analysis["missing_info"].get("fields"):
+            examples = intent_analysis["missing_info"].get("examples", {})
+
+            # 이전 컨텍스트 유지하면서 업데이트
+            state["context"] = update_dict(current_context, target_context)
+            cache_client.add_message(
+                session_id, {"type": "context", "data": state["context"]}
+            )
+
             state["result"] = {
                 "status": "need_more_info",
-                "message": response.content,
-                "missing_fields": [
-                    "departure_location",
-                    "departure_date",
-                    "destination",
-                    "duration",
-                    "preferences",
-                ],
-                "examples": {
-                    "departure_location": "서울",
-                    "departure_date": "2024-05-01",
-                    "destination": "제주도",
-                    "duration": "3박 4일",
-                    "preferences": {
-                        "budget": "100만원",
-                        "activities": ["해변", "등산", "맛집"],
-                        "accommodation": "호텔",
-                        "transportation": "렌터카",
-                    },
-                },
-                "current_context": state.get("context", {}),  # 현재 컨텍스트 정보 추가
+                "message": intent_analysis["missing_info"]["message"],
+                "missing_fields": intent_analysis["missing_info"]["fields"],
+                "examples": examples,
+                "current_context": state["context"],
             }
             state["next_steps"] = ["analyze_intent"]
             state["current_agent"] = None
-            return state
+        else:
+            # 필요한 정보가 모두 있는 경우
+            state["current_agent"] = intent_analysis["primary_intent"]
+            state["context"] = update_dict(current_context, target_context)
+            state["next_steps"] = intent_analysis["suggested_next_steps"]
+
+        return state
 
     def _run_agent(self, agent_name: str):
         """에이전트 실행 함수 생성"""
