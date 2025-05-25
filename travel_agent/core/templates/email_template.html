@@ -52,21 +52,21 @@
 <body>
     <div class="header">
         <h1>{{ destination }} 여행 계획</h1>
-        <p>기간: {{ duration }}</p>
+        <p>기간: {{ duration }}일</p>
     </div>
 
     <div class="section">
         <h2>일정</h2>
         {% for day in itinerary %}
         <div class="day-plan">
-            <h3>Day {{ day.day }}</h3>
+            <h3>Day {{ day.day.__value__ }}</h3>
             {% for activity in day.activities %}
             <div>
                 <strong>{{ activity.time }}</strong> - {{ activity.activity }}
                 <br>
                 장소: {{ activity.location }}
                 <br>
-                소요시간: {{ activity.duration }} | 비용: {{ activity.cost }}원
+                소요시간: {{ activity.duration }} | 비용: {{ activity.cost.__value__ }}원
             </div>
             {% endfor %}
         </div>
@@ -77,23 +77,23 @@
         <h2>예산 계획</h2>
         <div class="budget-item">
             <span>교통비:</span>
-            <span>{{ budget.transportation.estimated }}원</span>
+            <span>{{ budget.transportation.estimated.__value__ }}원</span>
         </div>
         <div class="budget-item">
             <span>숙박비:</span>
-            <span>{{ budget.accommodation.estimated }}원</span>
+            <span>{{ budget.accommodation.estimated.__value__ }}원</span>
         </div>
         <div class="budget-item">
             <span>식비:</span>
-            <span>{{ budget.food.estimated }}원</span>
+            <span>{{ budget.food.estimated.__value__ }}원</span>
         </div>
         <div class="budget-item">
             <span>활동비:</span>
-            <span>{{ budget.activities.estimated }}원</span>
+            <span>{{ budget.activities.estimated.__value__ }}원</span>
         </div>
         <div class="budget-item total">
             <span>총 예산:</span>
-            <span>{{ budget.total }}원</span>
+            <span>{{ budget.total.__value__ }}원</span>
         </div>
     </div>
 

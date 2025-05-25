@@ -1,6 +1,5 @@
 <script setup>
 import { ref, onMounted, nextTick } from 'vue'
-import axios from 'axios'
 
 const messages = ref([])
 const userInput = ref('')
@@ -9,6 +8,7 @@ const messagesContainer = ref(null)
 const sessionId = ref('')  // 세션 ID 저장
 const lastPlan = ref('')  // 마지막 여행 계획 저장
 const lastRecommendations = ref('')  // 마지막 추천 여행지 저장
+const lastMessage = ref('')  // 마지막 일반 메시지 저장
 
 // UUID 생성 함수
 const generateUUID = () => {
@@ -133,9 +133,8 @@ const sendMessage = async () => {
             return content === lastRecommendations.value
           }
           
-          // 일반 메시지의 경우 내용 비교
-          const lastMessage = messages.value[messages.value.length - 1]
-          return lastMessage.type === 'bot' && lastMessage.content === content
+          // 일반 메시지의 경우 마지막 메시지와 비교
+          return content === lastMessage.value
         }
 
         // 상태에 따른 처리
@@ -144,6 +143,7 @@ const sendMessage = async () => {
             // 추가 정보 요청 메시지
             if (!isDuplicateMessage(parsed.message)) {
               messages.value.push({ type: 'bot', content: parsed.message })
+              lastMessage.value = parsed.message
             }
             break
 
@@ -151,6 +151,7 @@ const sendMessage = async () => {
             // 처리 중 상태 메시지
             if (!isDuplicateMessage(parsed.result)) {
               messages.value.push({ type: 'bot', content: parsed.result })
+              lastMessage.value = parsed.result
             }
             break
 
@@ -168,6 +169,7 @@ const sendMessage = async () => {
               // 추천 여행지가 있는 경우 포맷팅하여 표시
               if (parsed.message) {
                 messages.value.push({ type: 'bot', content: parsed.message })
+                lastMessage.value = parsed.message
               }
               const formattedRecommendations = formatRecommendations(parsed.recommendations)
               if (!isDuplicateMessage(formattedRecommendations, 'recommendations')) {
@@ -178,6 +180,7 @@ const sendMessage = async () => {
               // 메시지 표시
               if (parsed.message) {
                 messages.value.push({ type: 'bot', content: parsed.message })
+                lastMessage.value = parsed.message
               }
               // 3초 후 페이지 새로고침
               setTimeout(() => {
@@ -187,6 +190,7 @@ const sendMessage = async () => {
               const successMessage = parsed.message
               if (!isDuplicateMessage(successMessage)) {
                 messages.value.push({ type: 'bot', content: successMessage })
+                lastMessage.value = successMessage
               }
             }
             break
@@ -196,6 +200,7 @@ const sendMessage = async () => {
             const defaultMessage = parsed.message || event.data
             if (!isDuplicateMessage(defaultMessage)) {
               messages.value.push({ type: 'bot', content: defaultMessage })
+              lastMessage.value = defaultMessage
             }
         }
         scrollToBottom()
@@ -204,6 +209,7 @@ const sendMessage = async () => {
         // JSON 파싱 실패 시 일반 텍스트로 처리
         if (!isDuplicateMessage(event.data)) {
           messages.value.push({ type: 'bot', content: event.data })
+          lastMessage.value = event.data
         }
         scrollToBottom()
       }

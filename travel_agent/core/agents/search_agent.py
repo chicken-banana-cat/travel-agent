@@ -1,9 +1,8 @@
 import asyncio
 import json
-import os
+import logging
 import time
 from typing import Any, Dict, List
-from urllib.parse import quote
 
 import aiohttp
 from langchain.prompts import ChatPromptTemplate
@@ -12,6 +11,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from ..config.settings import settings
 from .base import BaseAgent
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class SearchAgent(BaseAgent):
     """여행 장소 검색을 담당하는 에이전트"""
@@ -191,6 +192,7 @@ class SearchAgent(BaseAgent):
             return final_results
 
         except Exception as e:
+            logger.error(exc_info=e, msg="이메일 전송 중 오류")
             return {
                 "status": "error",
                 "error": "Search failed",

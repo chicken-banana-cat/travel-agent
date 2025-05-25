@@ -1,3 +1,4 @@
+import logging
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -9,7 +10,8 @@ from jinja2 import Template
 from ..config.settings import settings
 from .base import BaseAgent
 
-
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 class MailAgent(BaseAgent):
     """여행 계획 메일 전송을 담당하는 에이전트"""
 
@@ -50,8 +52,8 @@ class MailAgent(BaseAgent):
             search_result["places"] = search_result["context"]["preferences"]["places"]
 
             destination = input_data["context"]["destination"]
-            duration = input_data["context"]["duration"]
             itinerary = plan["itinerary"]
+            duration = len(itinerary)
             budget = plan["budget"]
             recommendations = plan["recommendations"]
             tips = plan["tips"]
@@ -94,10 +96,11 @@ class MailAgent(BaseAgent):
             return {
                 "status": "success",
                 "message": "여행 계획이 이메일로 전송되었습니다.",
-                "email": input_data["message"],
+                "email": input_data["email"],
             }
 
         except Exception as e:
+            logger.error(exc_info=e, msg="이메일 전송 중 오류")
             return {
                 "status": "error",
                 "error": "Mail sending failed",
