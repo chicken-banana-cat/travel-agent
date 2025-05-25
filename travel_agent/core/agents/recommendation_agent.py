@@ -3,9 +3,10 @@ from typing import Any, Dict, List
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
-from tenacity import retry, stop_after_attempt, retry_if_exception_type, RetryError
-from travel_agent.utils import update_dict
+from tenacity import RetryError, retry, retry_if_exception_type, stop_after_attempt
+
 from travel_agent.core.config.settings import settings
+from travel_agent.utils import update_dict
 from travel_agent.utils.cache_client import cache_client
 
 
@@ -94,12 +95,10 @@ class RecommendationAgent:
     @retry(
         stop=stop_after_attempt(3),
         retry=retry_if_exception_type(json.JSONDecodeError),
-        reraise=True
+        reraise=True,
     )
     async def _get_llm_recommendation(
-        self,
-        formatted_prompt: List[SystemMessage | HumanMessage],
-        current_step: str
+        self, formatted_prompt: List[SystemMessage | HumanMessage], current_step: str
     ) -> Dict[str, Any]:
         """LLM을 통한 추천 결과 가져오기"""
         try:
@@ -127,16 +126,19 @@ class RecommendationAgent:
         before_contexts = session_data.get("context", [])
         current_step = collected_info.get("next_step", "preferences")
 
-
         if before_contexts:
             additional_context = before_contexts[-1].get("data", {})
         else:
             additional_context = {}
         # 단계별 처리
         if current_step == "preferences":
-            return await self._process_preferences(message, collected_info, additional_context, session_id)
+            return await self._process_preferences(
+                message, collected_info, additional_context, session_id
+            )
         elif current_step == "destination":
-            return await self._process_destination(message, collected_info, additional_context)
+            return await self._process_destination(
+                message, collected_info, additional_context
+            )
         else:
             return {
                 "status": "error",
@@ -144,7 +146,13 @@ class RecommendationAgent:
                 "current_step": current_step,
             }
 
-    async def _process_preferences(self, message: str, collected_info: Dict[str, Any], additional_context: dict, session_id: str) -> Dict[str, Any]:
+    async def _process_preferences(
+        self,
+        message: str,
+        collected_info: Dict[str, Any],
+        additional_context: dict,
+        session_id: str,
+    ) -> Dict[str, Any]:
         """환경 정보 수집 및 추천 단계 진행"""
         step_config = self.recommendation_steps["preferences"]
         context = json.dumps(collected_info, ensure_ascii=False, indent=2)
@@ -170,11 +178,15 @@ class RecommendationAgent:
             collected_info["next_step"] = "destination"
         else:
             collected_info["next_step"] = "preferences"
-        cache_client.add_message(session_id, {"type": "collected_info", "data": collected_info})
+        cache_client.add_message(
+            session_id, {"type": "collected_info", "data": collected_info}
+        )
 
         return result
 
-    async def _process_destination(self, message: str, collected_info: Dict[str, Any], additional_context: dict) -> Dict[str, Any]:
+    async def _process_destination(
+        self, message: str, collected_info: Dict[str, Any], additional_context: dict
+    ) -> Dict[str, Any]:
         """여행지 추천 및 추천 단계 진행"""
         step_config = self.recommendation_steps["destination"]
         context = json.dumps(collected_info, ensure_ascii=False, indent=2)

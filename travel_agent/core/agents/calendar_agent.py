@@ -1,13 +1,14 @@
+import os
 from datetime import datetime, timedelta
 from typing import Any, Dict, List
+
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-import os
-
 from langchain.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from travel_agent.utils.cache_client import cache_client
+
 from .base import BaseAgent
 
 
@@ -82,7 +83,7 @@ class CalendarAgent(BaseAgent):
         requires_reservation = (
             "예약" in activity["activity"] or "사전 예약" in activity["activity"]
         )
-        
+
         event = {
             "summary": activity["activity"],
             "location": activity["location"],
@@ -91,12 +92,14 @@ class CalendarAgent(BaseAgent):
             "description": f"비용: {int(activity['cost']):,}원\n장소: {activity['location']}\n"
             + ("⚠️ 사전 예약이 필요한 활동입니다." if requires_reservation else ""),
         }
-        
+
         # Google Calendar API 호출
         creds = self._get_credentials()
-        service = build('calendar', 'v3', credentials=creds)
-        created_event = service.events().insert(calendarId=self.email, body=event).execute()
-        
+        service = build("calendar", "v3", credentials=creds)
+        created_event = (
+            service.events().insert(calendarId=self.email, body=event).execute()
+        )
+
         return created_event
 
     def _get_credentials(self) -> service_account.Credentials:
@@ -112,7 +115,7 @@ class CalendarAgent(BaseAgent):
             "token_uri": "https://oauth2.googleapis.com/token",
             "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
             "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/travel-agent-calendar%40travel-agent-460815.iam.gserviceaccount.com",
-            "universe_domain": "googleapis.com"
+            "universe_domain": "googleapis.com",
         }
         credentials = service_account.Credentials.from_service_account_info(
             info, scopes=["https://www.googleapis.com/auth/calendar"]

@@ -12,6 +12,8 @@ from .base import BaseAgent
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
 class MailAgent(BaseAgent):
     """여행 계획 메일 전송을 담당하는 에이전트"""
 

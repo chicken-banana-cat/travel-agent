@@ -14,6 +14,7 @@ from .base import BaseAgent
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
 class SearchAgent(BaseAgent):
     """여행 장소 검색을 담당하는 에이전트"""
 

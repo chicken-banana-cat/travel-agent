@@ -6,11 +6,11 @@ from langchain_core.prompts import ChatPromptTemplate, SystemMessagePromptTempla
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
 from langgraph.pregel import Pregel
-from tenacity import retry, stop_after_attempt, retry_if_exception_type, RetryError
+from tenacity import RetryError, retry, retry_if_exception_type, stop_after_attempt
 
+from travel_agent.core.config.settings import settings
 from travel_agent.tasks import process_search_and_mail
 from travel_agent.utils import update_dict
-from travel_agent.core.config.settings import settings
 from travel_agent.utils.cache_client import cache_client
 
 from .calendar_agent import CalendarAgent
@@ -190,9 +190,7 @@ class Orchestrator:
 
         # LLM을 통한 의도 분석
         intent_analysis = await self._analyze_intent_with_llm(
-            messages[-1].content,
-            current_context,
-            last_collected_info
+            messages[-1].content, current_context, last_collected_info
         )
 
         if not intent_analysis:
@@ -202,13 +200,12 @@ class Orchestrator:
 
         # 의도 분석 결과 처리
         return await self._process_intent_analysis(
-            state,
-            intent_analysis,
-            current_context,
-            session_id
+            state, intent_analysis, current_context, session_id
         )
 
-    async def _handle_email_input(self, state: AgentState, session_data: dict, session_id: str) -> bool:
+    async def _handle_email_input(
+        self, state: AgentState, session_data: dict, session_id: str
+    ) -> bool:
         """이메일 입력 처리"""
         msg = state["messages"][-1].content.strip()
         if "@" in msg and "." in msg and session_data.get("plan"):
@@ -248,7 +245,7 @@ class Orchestrator:
     @retry(
         stop=stop_after_attempt(3),
         retry=retry_if_exception_type((json.JSONDecodeError, Exception)),
-        reraise=True
+        reraise=True,
     )
     async def _analyze_intent_with_llm(
         self,
@@ -257,9 +254,10 @@ class Orchestrator:
         last_collected_info: dict,
     ) -> Optional[dict]:
         """LLM을 통한 의도 분석"""
-        prompt = ChatPromptTemplate.from_messages([
-            SystemMessagePromptTemplate.from_template(
-                """당신은 여행 계획 조율자입니다.
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                SystemMessagePromptTemplate.from_template(
+                    """당신은 여행 계획 조율자입니다.
             사용자의 메시지를 분석하여 어떤 에이전트가 처리해야 할지 결정하세요.
             
             가능한 의도:
@@ -333,15 +331,20 @@ class Orchestrator:
                     }}
                 }}
             }}"""
-            ),
-            HumanMessage(content=message),
-        ])
+                ),
+                HumanMessage(content=message),
+            ]
+        )
 
         try:
             response = await self.llm.ainvoke(
                 prompt.format_messages(
-                    current_context=json.dumps(current_context, ensure_ascii=False, indent=2),
-                    last_collected_info=json.dumps(last_collected_info, ensure_ascii=False, indent=2)
+                    current_context=json.dumps(
+                        current_context, ensure_ascii=False, indent=2
+                    ),
+                    last_collected_info=json.dumps(
+                        last_collected_info, ensure_ascii=False, indent=2
+                    ),
                 )
             )
             return json.loads(response.content)
@@ -357,7 +360,7 @@ class Orchestrator:
         state: AgentState,
         intent_analysis: dict,
         current_context: dict,
-        session_id: str
+        session_id: str,
     ) -> AgentState:
         """의도 분석 결과 처리"""
         # 현재 컨텍스트에 있는 필드가 missing_info에 포함되어 있는지 확인
@@ -453,7 +456,9 @@ class Orchestrator:
             return state
 
         # 누락된 정보가 있는 경우
-        if intent_analysis.get("missing_info") and intent_analysis["missing_info"].get("fields"):
+        if intent_analysis.get("missing_info") and intent_analysis["missing_info"].get(
+            "fields"
+        ):
             examples = intent_analysis["missing_info"].get("examples", {})
 
             # 이전 컨텍스트 유지하면서 업데이트

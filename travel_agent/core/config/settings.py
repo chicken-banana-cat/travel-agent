@@ -84,9 +84,7 @@ class Settings(BaseSettings):
             "calendar_agent": AgentConfig(
                 primary_model="gpt-4.1-mini", fallback_models=[]
             ),
-            "mail_agent": AgentConfig(
-                primary_model="gpt-4.1-mini", fallback_models=[]
-            ),
+            "mail_agent": AgentConfig(primary_model="gpt-4.1-mini", fallback_models=[]),
         }
     )
 
@@ -101,6 +99,7 @@ class Settings(BaseSettings):
         env_file_encoding = "utf-8"
         env_prefix = ""
         case_sensitive = True
+
 
 try:
     settings = Settings()
